@@ -28,6 +28,8 @@ Implement the new `clubs-cli` tool. Focus first on single-publisher clubs and re
 - `clubs-cli` composes new `Edition`s by optionally encrypting content, adding permits (public-key and SSKR), and signing with the publisher’s keys from the XID document.
 - All inputs and outputs must be URs; leverage the UR-aware types across the workspace.
 
+The command line tools `provenance`, `envelope`, and others from this workspace are installed and can be run to generate test vectors and understand expected workflows.
+
 ## `clubs-cli` Development Plan
 
 ### Objectives
