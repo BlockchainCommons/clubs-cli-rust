@@ -115,9 +115,3 @@ The command line tools `provenance`, `envelope`, and others from this workspace 
 
 ### Demo workflow
 - `clubs-demo.py` now wraps the content envelope before composition, runs `edition inspect` to harvest permit URs, and exercises both SSKR- and permit-based decryptions. Resulting URs plus formatted envelopes are saved under `clubs-demo/` for reference.
-
-### Updated next steps
-- Thread the content digest through to provenance (and update the demo to surface it) once the upstream plumbing is ready.
-- Add regression tests for the new commands (especially permit parsing and mixed decryption paths) to keep future refactors honest.
-- Consider exporting derived permit envelopes to a predictable directory so that future tooling can discover them without scraping logs.
-- Rework `clubs-demo.py` to run all steps in a single interactive shell session while keeping the emitted Markdown identical to the current output: (1) instantiate a persistent `bash` subprocess, (2) stream each command cluster into that shell, capturing stdout/stderr per logical step, and (3) preserve existing formatting (one command per line, aggregated output inside the same code fence).
