@@ -452,16 +452,15 @@ def main() -> None:
             shell,
             "Composing genesis edition",
             f"""
-            RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \\
-              --publisher "$PUBLISHER_XID" \\
-              --content "$CONTENT_WRAPPED" \\
-              --provenance "$GENESIS_MARK" \\
-              --permit "$ALICE_XID" \\
-              --permit "$BOB_PUBKEYS" \\
-              --sskr 2of3 \\
-              --summary \\
-              --out-dir {qp(DEMO_DIR)} \\
-              2>&1 | tee {qp(COMPOSE_LOG)}
+            RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \
+              --publisher "$PUBLISHER_XID" \
+              --content "$CONTENT_WRAPPED" \
+              --provenance "$GENESIS_MARK" \
+              --permit "$ALICE_XID" \
+              --permit "$BOB_PUBKEYS" \
+              --sskr 2of3 \
+              --summary \
+              --out-dir {qp(DEMO_DIR)}
             """,
         )
 
@@ -528,61 +527,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEMO_DIR = SCRIPT_DIR / "clubs-demo"
 PROV_DIR = DEMO_DIR / "provenance-chain"
 
-PUBLISHER_SEED = DEMO_DIR / "publisher.seed.ur"
-PUBLISHER_PRVKEYS = DEMO_DIR / "publisher.prvkeys.ur"
-PUBLISHER_XID = DEMO_DIR / "publisher.xid.ur"
-PUBLISHER_XID_FORMAT = DEMO_DIR / "publisher.xid.format.txt"
-
-SEED_FILES = {
-    "alice": DEMO_DIR / "alice.seed.ur",
-    "bob": DEMO_DIR / "bob.seed.ur",
-}
-PRVKEY_FILES = {
-    "alice": DEMO_DIR / "alice.prvkeys.ur",
-    "bob": DEMO_DIR / "bob.prvkeys.ur",
-}
-PUBKEY_FILES = {
-    "alice": DEMO_DIR / "alice.pubkeys.ur",
-    "bob": DEMO_DIR / "bob.pubkeys.ur",
-}
-XID_FILES = {
-    "alice": DEMO_DIR / "alice.xid.ur",
-    "bob": DEMO_DIR / "bob.xid.ur",
-}
-XID_FORMAT_FILES = {
-    "alice": DEMO_DIR / "alice.xid.format.txt",
-    "bob": DEMO_DIR / "bob.xid.format.txt",
-}
-
-CONTENT_SUBJECT_TMP = DEMO_DIR / "content.subject.tmp"
-CONTENT_CLEAR = DEMO_DIR / "content.clear.env.ur"
-CONTENT_CLEAR_FORMAT = DEMO_DIR / "content.clear.format.txt"
-CONTENT_WRAPPED = DEMO_DIR / "content.env.ur"
-CONTENT_FORMAT = DEMO_DIR / "content.format.txt"
-
-PROVENANCE_SEED = DEMO_DIR / "provenance-seed.ur"
-PROVENANCE_NEW_LOG = DEMO_DIR / "provenance-new.log"
-PROVENANCE_GENESIS = DEMO_DIR / "provenance-genesis.txt"
-GENESIS_MARK = DEMO_DIR / "genesis-mark.ur"
-
-COMPOSE_LOG = DEMO_DIR / "clubs-edition-init.log"
 EDITION_FILE = DEMO_DIR / "edition.ur"
-EDITION_INSPECT_LOG = DEMO_DIR / "clubs-edition-inspect.log"
-EDITION_INSPECT_OUT = DEMO_DIR / "clubs-edition-inspect.out"
-EDITION_NORMALIZED = DEMO_DIR / "edition.normalized.ur"
-
 SSKR_SHARES = [
     DEMO_DIR / "sskr-share-g1-1.ur",
     DEMO_DIR / "sskr-share-g1-2.ur",
+    DEMO_DIR / "sskr-share-g1-3.ur",
 ]
-
-CONTENT_SSKR_LOG = DEMO_DIR / "clubs-content-sskr.log"
-CONTENT_SSKR_LOG = DEMO_DIR / "clubs-content-sskr.log"
 CONTENT_FROM_SSKR = DEMO_DIR / "content.from-sskr.ur"
-CONTENT_FROM_SSKR_FORMAT = DEMO_DIR / "content.from-sskr.format.txt"
-CONTENT_PERMIT_LOG = DEMO_DIR / "clubs-content-permit.log"
 CONTENT_FROM_PERMIT = DEMO_DIR / "content.from-permit.ur"
-CONTENT_FROM_PERMIT_FORMAT = DEMO_DIR / "content.from-permit.format.txt"
 
 PARTICIPANTS = (
     ("alice", "ALICE-DEMO"),
@@ -592,43 +544,21 @@ PARTICIPANTS = (
 PATH_OBJECTS = {
     DEMO_DIR,
     PROV_DIR,
-    PUBLISHER_SEED,
-    PUBLISHER_PRVKEYS,
-    PUBLISHER_XID,
-    PUBLISHER_XID_FORMAT,
-    CONTENT_SUBJECT_TMP,
-    CONTENT_CLEAR,
-    CONTENT_CLEAR_FORMAT,
-    CONTENT_WRAPPED,
-    CONTENT_FORMAT,
-    PROVENANCE_SEED,
-    PROVENANCE_NEW_LOG,
-    PROVENANCE_GENESIS,
-    GENESIS_MARK,
-    COMPOSE_LOG,
+    PROV_DIR / "generator.json",
+    PROV_DIR / "marks",
+    PROV_DIR / "marks/mark-0.json",
     EDITION_FILE,
-    EDITION_INSPECT_LOG,
-    EDITION_INSPECT_OUT,
-    EDITION_NORMALIZED,
-    CONTENT_SSKR_LOG,
     CONTENT_FROM_SSKR,
-    CONTENT_FROM_SSKR_FORMAT,
-    CONTENT_PERMIT_LOG,
     CONTENT_FROM_PERMIT,
-    CONTENT_FROM_PERMIT_FORMAT,
+    DEMO_DIR / "permit-1.ur",
+    DEMO_DIR / "permit-2.ur",
 }
-
-PATH_OBJECTS.update(SEED_FILES.values())
-PATH_OBJECTS.update(PRVKEY_FILES.values())
-PATH_OBJECTS.update(PUBKEY_FILES.values())
-PATH_OBJECTS.update(XID_FILES.values())
-PATH_OBJECTS.update(XID_FORMAT_FILES.values())
 PATH_OBJECTS.update(SSKR_SHARES)
 
 PATH_REPLACEMENTS = []
-for path in PATH_OBJECTS:
-    abs_path = str(path.resolve())
-    rel_path = rel(path)
+for path_obj in PATH_OBJECTS:
+    abs_path = str(path_obj.resolve())
+    rel_path = rel(path_obj)
     PATH_REPLACEMENTS.append((abs_path, rel_path))
     PATH_REPLACEMENTS.append((shlex.quote(abs_path), rel_path))
     PATH_REPLACEMENTS.append((f"@{abs_path}", f"@{rel_path}"))
@@ -638,25 +568,19 @@ ENV = os.environ.copy()
 
 
 def process_inspection_output(output: str) -> None:
-    all_lines = [line for line in output.splitlines() if line]
-    EDITION_INSPECT_LOG.write_text(output + ("\n" if output else ""))
-    EDITION_INSPECT_OUT.write_text("\n".join(all_lines) + ("\n" if all_lines else ""))
-
-    ur_lines = [line for line in all_lines if line.startswith("ur:")]
+    ur_lines = [line for line in output.splitlines() if line.startswith("ur:")]
 
     for permit in sorted(DEMO_DIR.glob("permit-*.ur")):
         permit.unlink()
 
-    if not ur_lines:
+    if len(ur_lines) <= 1:
         return
 
-    EDITION_NORMALIZED.write_text(ur_lines[0] + "\n")
     for index, line in enumerate(ur_lines[1:], start=1):
         (DEMO_DIR / f"permit-{index}.ur").write_text(line + "\n")
 
 
 def process_sskr_output(output: str) -> None:
-    CONTENT_SSKR_LOG.write_text(output + ("\n" if output else ""))
     ur_lines = [line for line in output.splitlines() if line.startswith("ur:")]
     if not ur_lines:
         raise RuntimeError("SSKR decryption did not produce a UR")
@@ -687,7 +611,6 @@ def process_permit_output(outputs: list[str]) -> None:
         raise RuntimeError("Permit decryption produced no output")
 
     last_output = outputs[-1]
-    CONTENT_PERMIT_LOG.write_text(last_output + ("\n" if last_output else ""))
     ur_lines = [line for line in last_output.splitlines() if line.startswith("ur:")]
     if not ur_lines:
         raise RuntimeError("Permit decryption did not produce a UR")
