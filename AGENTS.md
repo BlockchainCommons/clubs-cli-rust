@@ -87,7 +87,7 @@ The command line tools `provenance`, `envelope`, and others from this workspace 
 
 ### Workflow implementation status
 - Implemented `clubs-cli edition compose` and `clubs-cli init`, wiring publisher XID documents (including private keys) into the composer, enforcing genesis/previous-mark rules, and emitting edition URs plus optional SSKR shards.
-- Added `clubs-cli/clubs-demo.sh`, a reproducible walkthrough that regenerates deterministic seeds/XID docs, assembles content, advances provenance, and exercises the new compose pipeline. The script now lives beside the binary, writes outputs into `clubs-cli/clubs-demo/`, and demonstrates the current limitations (inspection/decrypt commands still pending).
+- Added `clubs-cli/clubs-demo.py`, a reproducible walkthrough that regenerates deterministic seeds/XID docs, assembles content, advances provenance, and exercises the new compose pipeline. The script now lives beside the binary, writes outputs into `clubs-cli/clubs-demo/`, and demonstrates the current limitations (inspection/decrypt commands still pending).
 - Composer summary output documents the recipients, SSKR spec, provenance sequence, and where artifacts are written; stdout stays machine-friendly (UR per line) for downstream tooling.
 
 ### Envelope digest expectations
@@ -114,9 +114,10 @@ The command line tools `provenance`, `envelope`, and others from this workspace 
 - Brought in `dcbor` to decode symmetric keys carried inside sealed messages when unwrapping public-key permits.
 
 ### Demo workflow
-- `clubs-demo.sh` now wraps the content envelope before composition, runs `edition inspect` to harvest permit URs, and exercises both SSKR- and permit-based decryptions. Resulting URs plus formatted envelopes are saved under `clubs-demo/` for reference.
+- `clubs-demo.py` now wraps the content envelope before composition, runs `edition inspect` to harvest permit URs, and exercises both SSKR- and permit-based decryptions. Resulting URs plus formatted envelopes are saved under `clubs-demo/` for reference.
 
 ### Updated next steps
 - Thread the content digest through to provenance (and update the demo to surface it) once the upstream plumbing is ready.
 - Add regression tests for the new commands (especially permit parsing and mixed decryption paths) to keep future refactors honest.
 - Consider exporting derived permit envelopes to a predictable directory so that future tooling can discover them without scraping logs.
+- Rework `clubs-demo.py` to run all steps in a single interactive shell session while keeping the emitted Markdown identical to the current output: (1) instantiate a persistent `bash` subprocess, (2) stream each command cluster into that shell, capturing stdout/stderr per logical step, and (3) preserve existing formatting (one command per line, aggregated output inside the same code fence).
