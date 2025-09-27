@@ -13,46 +13,85 @@ from pathlib import Path
 BOX_PREFIX = "│ "
 
 
-def run_step(title: str, command: str, commentary: str | None = None) -> None:
-    """Execute *command* (a bash snippet) and render the result in Markdown."""
+def run_step(
+    title: str,
+    commands: list[str] | tuple[str, ...] | str,
+    commentary: str | None = None,
+    *,
+    stop_on_success: bool = False,
+) -> list[str]:
+    """Execute commands and render the result in Markdown."""
 
-    dedented = textwrap.dedent(command).strip()
-    display_command = sanitize_command(dedented)
+    if isinstance(commands, str):
+        command_list = [textwrap.dedent(commands).strip()]
+    else:
+        command_list = [textwrap.dedent(cmd).strip() for cmd in commands]
+
+    outputs: list[str] = []
+    aggregated_lines: list[str] = []
+    success = False
+    last_error: subprocess.CalledProcessError | None = None
+    failure_output: str = ""
 
     print(f"## {title}\n")
     if commentary:
         print(f"{commentary}\n")
 
     print("```")
-    print(display_command)
+    for index, command in enumerate(command_list):
+        if not command:
+            continue
 
-    try:
-        result = subprocess.run(
-            ["bash", "-lc", dedented],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=SCRIPT_DIR,
-            env=ENV,
-        )
-        output = (result.stdout + result.stderr).rstrip("\n")
-    except subprocess.CalledProcessError as error:
-        output = ((error.stdout or "") + (error.stderr or "")).rstrip("\n")
+        display_command = sanitize_command(command)
+        print(display_command)
+
+        try:
+            result = subprocess.run(
+                ["bash", "-lc", command],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=SCRIPT_DIR,
+                env=ENV,
+            )
+            output = (result.stdout + result.stderr).rstrip("\n")
+            success = True
+        except subprocess.CalledProcessError as error:
+            output = ((error.stdout or "") + (error.stderr or "")).rstrip("\n")
+            last_error = error
+            if not stop_on_success:
+                if output:
+                    print("")
+                    for line in output.splitlines():
+                        print(f"{BOX_PREFIX}{line}")
+                print("```")
+                print("")
+                raise SystemExit(error.returncode) from error
+            failure_output = output
+            continue
+        outputs.append(output)
         if output:
+            aggregated_lines.extend(output.splitlines())
+
+        if stop_on_success and success:
+            break
+
+    if stop_on_success and not success and last_error is not None:
+        if failure_output:
             print("")
-            for line in output.splitlines():
+            for line in failure_output.splitlines():
                 print(f"{BOX_PREFIX}{line}")
         print("```")
         print("")
-        raise SystemExit(error.returncode) from error
+        raise SystemExit(last_error.returncode) from last_error
 
-    if output:
+    if aggregated_lines:
         print("")
-        for line in output.splitlines():
-            print(f"{BOX_PREFIX}{line}")
-
+        print("\n".join(f"{BOX_PREFIX}{line}" for line in aggregated_lines))
     print("```")
     print("")
+
+    return outputs
 
 
 def qp(path: Path) -> str:
@@ -95,39 +134,36 @@ def main() -> None:
 
     run_step(
         "Deriving publisher signing material",
-        f"""
-        envelope generate prvkeys --seed "$(cat {qp(PUBLISHER_SEED)})" | tee {qp(PUBLISHER_PRVKEYS)} && \
-        envelope xid new "$(cat {qp(PUBLISHER_PRVKEYS)})" | tee {qp(PUBLISHER_XID)} && \
-        envelope format "$(cat {qp(PUBLISHER_XID)})" | tee {qp(PUBLISHER_XID_FORMAT)}
-        """,
+        [
+            f'envelope generate prvkeys --seed "$(cat {rel(PUBLISHER_SEED)})" | tee {rel(PUBLISHER_PRVKEYS)}',
+            f'envelope xid new "$(cat {rel(PUBLISHER_PRVKEYS)})" | tee {rel(PUBLISHER_XID)}',
+            f'envelope format "$(cat {rel(PUBLISHER_XID)})" | tee {rel(PUBLISHER_XID_FORMAT)}',
+        ],
     )
 
     for name, seed_tag in PARTICIPANTS:
         upper = name.upper()
         run_step(
             f"Creating XID document for {upper}",
-            f"""
-            seedtool --deterministic={seed_tag} --out seed | tee {qp(SEED_FILES[name])} && \
-            envelope generate prvkeys --seed "$(cat {qp(SEED_FILES[name])})" | tee {qp(PRVKEY_FILES[name])} && \
-            envelope generate pubkeys "$(cat {qp(PRVKEY_FILES[name])})" | tee {qp(PUBKEY_FILES[name])} && \
-            envelope xid new "$(cat {qp(PRVKEY_FILES[name])})" | tee {qp(XID_FILES[name])} && \
-            envelope format "$(cat {qp(XID_FILES[name])})" | tee {qp(XID_FORMAT_FILES[name])}
-            """,
+            [
+                f'seedtool --deterministic={seed_tag} --out seed | tee {rel(SEED_FILES[name])}',
+                f'envelope generate prvkeys --seed "$(cat {rel(SEED_FILES[name])})" | tee {rel(PRVKEY_FILES[name])}',
+                f'envelope generate pubkeys "$(cat {rel(PRVKEY_FILES[name])})" | tee {rel(PUBKEY_FILES[name])}',
+                f'envelope xid new "$(cat {rel(PRVKEY_FILES[name])})" | tee {rel(XID_FILES[name])}',
+                f'envelope format "$(cat {rel(XID_FILES[name])})" | tee {rel(XID_FORMAT_FILES[name])}',
+            ],
         )
 
     run_step(
         "Assembling edition content envelope",
-        f"""
-        CONTENT_CLEAR_UR=$( \
-          envelope subject type string "Welcome to the Gordian Club!" | \
-            envelope assertion add pred-obj string "title" string "Genesis Edition" \
-        ) && \
-        printf '%s\n' "$CONTENT_CLEAR_UR" | tee {qp(CONTENT_CLEAR)} && \
-        CONTENT_UR=$(envelope subject type wrapped "$CONTENT_CLEAR_UR") && \
-        printf '%s\n' "$CONTENT_UR" | tee {qp(CONTENT_WRAPPED)} && \
-        envelope format "$CONTENT_CLEAR_UR" | tee {qp(CONTENT_CLEAR_FORMAT)} && \
-        envelope format "$CONTENT_UR" | tee {qp(CONTENT_FORMAT)}
-        """,
+        [
+            f'envelope subject type string "Welcome to the Gordian Club!" | tee {rel(CONTENT_SUBJECT_TMP)}',
+            f'cat {rel(CONTENT_SUBJECT_TMP)} | envelope assertion add pred-obj string "title" string "Genesis Edition" | tee {rel(CONTENT_CLEAR)}',
+            f'rm {rel(CONTENT_SUBJECT_TMP)}',
+            f'envelope subject type wrapped "$(cat {rel(CONTENT_CLEAR)})" | tee {rel(CONTENT_WRAPPED)}',
+            f'envelope format "$(cat {rel(CONTENT_CLEAR)})" | tee {rel(CONTENT_CLEAR_FORMAT)}',
+            f'envelope format "$(cat {rel(CONTENT_WRAPPED)})" | tee {rel(CONTENT_FORMAT)}',
+        ],
     )
 
     run_step(
@@ -137,11 +173,11 @@ def main() -> None:
 
     run_step(
         "Starting provenance mark chain",
-        f"""
-        provenance new {qp(PROV_DIR)} --seed "$(cat {qp(PROVENANCE_SEED)})" --comment "Genesis edition" | tee {qp(PROVENANCE_NEW_LOG)} && \
-        provenance print {qp(PROV_DIR)} --start 0 --end 0 --format markdown | tee {qp(PROVENANCE_GENESIS)} && \
-        provenance print {qp(PROV_DIR)} --start 0 --end 0 --format ur | tee {qp(GENESIS_MARK)}
-        """,
+        [
+            f'provenance new {rel(PROV_DIR)} --seed "$(cat {rel(PROVENANCE_SEED)})" --comment "Genesis edition" | tee {rel(PROVENANCE_NEW_LOG)}',
+            f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown | tee {rel(PROVENANCE_GENESIS)}',
+            f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format ur | tee {rel(GENESIS_MARK)}',
+        ],
     )
 
     run_step(
@@ -160,70 +196,57 @@ def main() -> None:
         """,
     )
 
-    run_step(
+    inspect_output = run_step(
         "Inspecting composed edition",
-        f"""
-        INSPECT_STDOUT=$( \
-          RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \
-            edition inspect \
-            --edition "@{EDITION_FILE}" \
-            --publisher "@{PUBLISHER_XID}" \
-            --summary \
-            --emit-permits \
-            2> >(tee {qp(EDITION_INSPECT_LOG)} >&2) \
-        ) && \
-        printf '%s\n' "$INSPECT_STDOUT" | tee {qp(EDITION_INSPECT_OUT)} && \
-        if [ -s {qp(EDITION_INSPECT_OUT)} ]; then \
-          head -n1 {qp(EDITION_INSPECT_OUT)} > {qp(EDITION_NORMALIZED)}; \
-          tail -n +2 {qp(EDITION_INSPECT_OUT)} | awk -v dir={qp(DEMO_DIR)} 'NF {{ printf "%s\\n", $0 > sprintf("%s/permit-%d.ur", dir, NR) }}'; \
-        fi
-        """,
+        [
+            (
+                "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
+                f"edition inspect "
+                f"--edition \"@{rel(EDITION_FILE)}\" "
+                f"--publisher \"@{rel(PUBLISHER_XID)}\" "
+                f"--summary "
+                f"--emit-permits"
+            ),
+        ],
     )
+    process_inspection_output(inspect_output[-1] if inspect_output else "")
 
-    run_step(
+    sskr_output = run_step(
         "Decrypting content via SSKR shares",
-        f"""
-        SSKR_STDOUT=$( \
-          RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \
-            content decrypt \
-            --edition "@{EDITION_FILE}" \
-            --publisher "@{PUBLISHER_XID}" \
-            --sskr "@{SSKR_SHARES[0]}" \
-            --sskr "@{SSKR_SHARES[1]}" \
-            --emit-ur \
-            2> >(tee {qp(CONTENT_SSKR_LOG)} >&2) \
-        ) && \
-        printf '%s\n' "$SSKR_STDOUT" | tee {qp(CONTENT_FROM_SSKR)} && \
-        envelope format "$SSKR_STDOUT" | tee {qp(CONTENT_FROM_SSKR_FORMAT)}
-        """,
+        [
+            (
+                "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
+                f"content decrypt "
+                f"--edition \"@{rel(EDITION_FILE)}\" "
+                f"--publisher \"@{rel(PUBLISHER_XID)}\" "
+                f"--sskr \"@{rel(SSKR_SHARES[0])}\" "
+                f"--sskr \"@{rel(SSKR_SHARES[1])}\" "
+                f"--emit-ur"
+            ),
+        ],
     )
+    process_sskr_output(sskr_output[-1] if sskr_output else "")
 
     run_step(
+        "Formatting SSKR-recovered content",
+        [
+            f'envelope format "$(cat {rel(CONTENT_FROM_SSKR)})" | tee {rel(CONTENT_FROM_SSKR_FORMAT)}',
+        ],
+    )
+
+    permit_commands = build_permit_commands()
+    permit_outputs = run_step(
         "Decrypting content with Alice's permit",
-        f"""
-        PERMIT_STDOUT="" && \
-        for permit in {qp(DEMO_DIR)}/permit-*.ur; do \
-          [ -f "$permit" ] || continue; \
-          if PERMIT_STDOUT=$( \
-              RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \
-                content decrypt \
-                --edition "@{EDITION_FILE}" \
-                --publisher "@{PUBLISHER_XID}" \
-                --permit "@$permit" \
-                --identity "@{PRVKEY_FILES['alice']}" \
-                --emit-ur \
-                2>&1 | tee {qp(CONTENT_PERMIT_LOG)} \
-            ); then \
-            printf '%s\n' "$PERMIT_STDOUT" | tee {qp(CONTENT_FROM_PERMIT)} && \
-            envelope format "$PERMIT_STDOUT" | tee {qp(CONTENT_FROM_PERMIT_FORMAT)} && \
-            break; \
-          fi; \
-        done && \
-        if [ -z "$PERMIT_STDOUT" ]; then \
-          echo "Failed to decrypt content with Alice's permit" >&2; \
-          exit 1; \
-        fi
-        """,
+        permit_commands,
+        stop_on_success=True,
+    )
+    process_permit_output(permit_outputs)
+
+    run_step(
+        "Formatting permit-recovered content",
+        [
+            f'envelope format "$(cat {rel(CONTENT_FROM_PERMIT)})" | tee {rel(CONTENT_FROM_PERMIT_FORMAT)}',
+        ],
     )
 
 
@@ -257,6 +280,7 @@ XID_FORMAT_FILES = {
     "bob": DEMO_DIR / "bob.xid.format.txt",
 }
 
+CONTENT_SUBJECT_TMP = DEMO_DIR / "content.subject.tmp"
 CONTENT_CLEAR = DEMO_DIR / "content.clear.env.ur"
 CONTENT_CLEAR_FORMAT = DEMO_DIR / "content.clear.format.txt"
 CONTENT_WRAPPED = DEMO_DIR / "content.env.ur"
@@ -279,6 +303,7 @@ SSKR_SHARES = [
 ]
 
 CONTENT_SSKR_LOG = DEMO_DIR / "clubs-content-sskr.log"
+CONTENT_SSKR_LOG = DEMO_DIR / "clubs-content-sskr.log"
 CONTENT_FROM_SSKR = DEMO_DIR / "content.from-sskr.ur"
 CONTENT_FROM_SSKR_FORMAT = DEMO_DIR / "content.from-sskr.format.txt"
 CONTENT_PERMIT_LOG = DEMO_DIR / "clubs-content-permit.log"
@@ -297,11 +322,7 @@ PATH_OBJECTS = {
     PUBLISHER_PRVKEYS,
     PUBLISHER_XID,
     PUBLISHER_XID_FORMAT,
-    *SEED_FILES.values(),
-    *PRVKEY_FILES.values(),
-    *PUBKEY_FILES.values(),
-    *XID_FILES.values(),
-    *XID_FORMAT_FILES.values(),
+    CONTENT_SUBJECT_TMP,
     CONTENT_CLEAR,
     CONTENT_CLEAR_FORMAT,
     CONTENT_WRAPPED,
@@ -315,7 +336,6 @@ PATH_OBJECTS = {
     EDITION_INSPECT_LOG,
     EDITION_INSPECT_OUT,
     EDITION_NORMALIZED,
-    *SSKR_SHARES,
     CONTENT_SSKR_LOG,
     CONTENT_FROM_SSKR,
     CONTENT_FROM_SSKR_FORMAT,
@@ -323,6 +343,13 @@ PATH_OBJECTS = {
     CONTENT_FROM_PERMIT,
     CONTENT_FROM_PERMIT_FORMAT,
 }
+
+PATH_OBJECTS.update(SEED_FILES.values())
+PATH_OBJECTS.update(PRVKEY_FILES.values())
+PATH_OBJECTS.update(PUBKEY_FILES.values())
+PATH_OBJECTS.update(XID_FILES.values())
+PATH_OBJECTS.update(XID_FORMAT_FILES.values())
+PATH_OBJECTS.update(SSKR_SHARES)
 
 PATH_REPLACEMENTS = []
 for path in PATH_OBJECTS:
@@ -335,6 +362,62 @@ for path in PATH_OBJECTS:
 
 ENV = os.environ.copy()
 
+
+def process_inspection_output(output: str) -> None:
+    all_lines = [line for line in output.splitlines() if line]
+    EDITION_INSPECT_LOG.write_text(output + ("\n" if output else ""))
+    EDITION_INSPECT_OUT.write_text("\n".join(all_lines) + ("\n" if all_lines else ""))
+
+    ur_lines = [line for line in all_lines if line.startswith("ur:")]
+
+    for permit in sorted(DEMO_DIR.glob("permit-*.ur")):
+        permit.unlink()
+
+    if not ur_lines:
+        return
+
+    EDITION_NORMALIZED.write_text(ur_lines[0] + "\n")
+    for index, line in enumerate(ur_lines[1:], start=1):
+        (DEMO_DIR / f"permit-{index}.ur").write_text(line + "\n")
+
+
+def process_sskr_output(output: str) -> None:
+    CONTENT_SSKR_LOG.write_text(output + ("\n" if output else ""))
+    ur_lines = [line for line in output.splitlines() if line.startswith("ur:")]
+    if not ur_lines:
+        raise RuntimeError("SSKR decryption did not produce a UR")
+    CONTENT_FROM_SSKR.write_text("\n".join(ur_lines) + "\n")
+
+
+def build_permit_commands() -> list[str]:
+    commands: list[str] = []
+    for permit in sorted(DEMO_DIR.glob("permit-*.ur")):
+        commands.append(
+            (
+                "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
+                f"content decrypt "
+                f"--edition \"@{rel(EDITION_FILE)}\" "
+                f"--publisher \"@{rel(PUBLISHER_XID)}\" "
+                f"--permit \"@{rel(permit)}\" "
+                f"--identity \"@{rel(PRVKEY_FILES['alice'])}\" "
+                f"--emit-ur"
+            )
+        )
+    if not commands:
+        raise RuntimeError("No permit files available for decryption")
+    return commands
+
+
+def process_permit_output(outputs: list[str]) -> None:
+    if not outputs:
+        raise RuntimeError("Permit decryption produced no output")
+
+    last_output = outputs[-1]
+    CONTENT_PERMIT_LOG.write_text(last_output + ("\n" if last_output else ""))
+    ur_lines = [line for line in last_output.splitlines() if line.startswith("ur:")]
+    if not ur_lines:
+        raise RuntimeError("Permit decryption did not produce a UR")
+    CONTENT_FROM_PERMIT.write_text("\n".join(ur_lines) + "\n")
 
 if __name__ == "__main__":
     try:
