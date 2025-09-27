@@ -375,30 +375,31 @@ def main() -> None:
     # Create persistent shell instance for efficient execution
     with PersistentShell(cwd=str(SCRIPT_DIR), env=ENV, debug=False) as shell:
 
-        run_step(
-            shell,
+        run_step(shell,
             "Checking prerequisites",
             "for cmd in seedtool envelope provenance cargo; do command -v \"$cmd\"; done",
         )
 
-        run_step(
-            shell,
+        run_step(shell,
             "Preparing demo workspace",
             f"rm -rf {qp(DEMO_DIR)} && mkdir -p {qp(DEMO_DIR)}",
         )
 
-        run_step(
-            shell,
+        run_step(shell,
             "Generating deterministic publisher seed",
-            "PUBLISHER_SEED=$(seedtool --deterministic=CLUBS-DEMO --out seed)",
+            [
+                "PUBLISHER_SEED=$(seedtool --deterministic=CLUBS-DEMO --out seed)",
+                "echo $PUBLISHER_SEED"
+            ],
         )
 
-        run_step(
-            shell,
+        run_step(shell,
             "Deriving publisher signing material",
             [
                 'PUBLISHER_PRVKEYS=$(envelope generate prvkeys --seed "$PUBLISHER_SEED")',
+                'echo $PUBLISHER_PRVKEYS',
                 'PUBLISHER_XID=$(envelope xid new "$PUBLISHER_PRVKEYS")',
+                'echo $PUBLISHER_XID',
                 'envelope format "$PUBLISHER_XID"',  # Show the formatted output
             ],
         )
@@ -410,35 +411,34 @@ def main() -> None:
                 f"Creating XID document for {upper}",
                 [
                     f'{upper}_SEED=$(seedtool --deterministic={seed_tag} --out seed)',
+                    f'echo "${upper}_SEED=${{{upper}_SEED}}"',
                     f'{upper}_PRVKEYS=$(envelope generate prvkeys --seed "${upper}_SEED")',
+                    f'echo "${upper}_PRVKEYS=${{{upper}_PRVKEYS}}"',
                     f'{upper}_PUBKEYS=$(envelope generate pubkeys "${upper}_PRVKEYS")',
+                    f'echo "${upper}_PUBKEYS=${{{upper}_PUBKEYS}}"',
                     f'{upper}_XID=$(envelope xid new "${upper}_PRVKEYS")',
+                    f'echo "${upper}_XID=${{{upper}_XID}}"',
                     # Show the formatted output
                     f'envelope format "${upper}_XID"',
                 ],
             )
 
-        run_step(
-            shell,
+        run_step(shell,
             "Assembling edition content envelope",
             [
                 'CONTENT_SUBJECT=$(envelope subject type string "Welcome to the Gordian Club!")',
                 'CONTENT_CLEAR=$(echo "$CONTENT_SUBJECT" | envelope assertion add pred-obj string "title" string "Genesis Edition")',
                 'CONTENT_WRAPPED=$(envelope subject type wrapped "$CONTENT_CLEAR")',
-                # Show formatted output
-                'envelope format "$CONTENT_CLEAR"',
                 'envelope format "$CONTENT_WRAPPED"',
             ],
         )
 
-        run_step(
-            shell,
+        run_step(shell,
             "Deriving deterministic provenance seed",
             "PROVENANCE_SEED=$(seedtool --deterministic=PROVENANCE-DEMO --count 32 --out seed)",
         )
 
-        run_step(
-            shell,
+        run_step(shell,
             "Starting provenance mark chain",
             [
                 f'provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition"',
@@ -448,8 +448,7 @@ def main() -> None:
             ],
         )
 
-        run_step(
-            shell,
+        run_step(shell,
             "Composing genesis edition",
             f"""
             RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \
@@ -497,8 +496,7 @@ def main() -> None:
         )
         process_sskr_output(sskr_output[-1] if sskr_output else "")
 
-        run_step(
-            shell,
+        run_step(shell,
             "Formatting SSKR-recovered content",
             [
                 f'envelope format "$(cat {rel(CONTENT_FROM_SSKR)})"',
@@ -514,8 +512,7 @@ def main() -> None:
         )
         process_permit_output(permit_outputs)
 
-        run_step(
-            shell,
+        run_step(shell,
             "Formatting permit-recovered content",
             [
                 f'envelope format "$(cat {rel(CONTENT_FROM_PERMIT)})"',
