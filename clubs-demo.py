@@ -53,7 +53,7 @@ class PersistentShell:
         self._ctrl_r = ctrl_r
         self._ctrl_w = ctrl_w
 
-        # Build the bootstrap script using expert's corrected version
+        # Build the bootstrap script
         bootstrap = f"""\
 # PersistentShell bootstrap (executed via: bash -lc '<this script>')
 # stdin is already /dev/null from the parent; do not touch FD 0 here.
@@ -104,7 +104,7 @@ done
 exit 0
 """
 
-        # Compose bash argv with corrected approach
+        # Compose bash argv
         argv = [bash_path]
         if login:
             argv.append("-l")
@@ -115,10 +115,10 @@ exit 0
         if debug:
             shell_env["PSH_DEBUG"] = "1"
 
-        # Start Bash with corrected parameters - no stdin manipulation
+        # Start Bash
         self._proc = subprocess.Popen(
             argv,
-            stdin=subprocess.DEVNULL,  # Key fix: don't use stdin for bootstrap
+            stdin=subprocess.DEVNULL,  # Important: don't use stdin for bootstrap
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=cwd,
@@ -135,7 +135,7 @@ exit 0
             raise RuntimeError("Failed to create pipes for persistent shell.")
         self._sel.register(self._proc.stdout, selectors.EVENT_READ)
 
-        # Don't write bootstrap to stdin anymore - it's handled by -c argument
+        # Don't write bootstrap to stdin - it's handled by -c argument
         self._ctrl_wf = os.fdopen(self._ctrl_w, "wb", buffering=0)
 
     def _assert_alive(self):
@@ -390,7 +390,6 @@ def main() -> None:
         run_step(
             shell,
             "Generating deterministic publisher seed",
-            # Use shell variable instead of file for efficiency
             "PUBLISHER_SEED=$(seedtool --deterministic=CLUBS-DEMO --out seed)",
         )
 
@@ -398,11 +397,9 @@ def main() -> None:
             shell,
             "Deriving publisher signing material",
             [
-                # Use shell variables instead of file I/O
                 'PUBLISHER_PRVKEYS=$(envelope generate prvkeys --seed "$PUBLISHER_SEED")',
                 'PUBLISHER_XID=$(envelope xid new "$PUBLISHER_PRVKEYS")',
-                f'echo "$PUBLISHER_XID" | tee {rel(PUBLISHER_XID)}',  # Still save for later file access
-                f'envelope format "$PUBLISHER_XID" | tee {rel(PUBLISHER_XID_FORMAT)}',
+                'envelope format "$PUBLISHER_XID"',  # Show the formatted output
             ],
         )
 
@@ -412,15 +409,12 @@ def main() -> None:
                 shell,
                 f"Creating XID document for {upper}",
                 [
-                    # Use shell variables instead of intermediate files
                     f'{upper}_SEED=$(seedtool --deterministic={seed_tag} --out seed)',
                     f'{upper}_PRVKEYS=$(envelope generate prvkeys --seed "${upper}_SEED")',
                     f'{upper}_PUBKEYS=$(envelope generate pubkeys "${upper}_PRVKEYS")',
                     f'{upper}_XID=$(envelope xid new "${upper}_PRVKEYS")',
-                    # Save the final results for file-based access later
-                    f'echo "${upper}_XID" | tee {rel(XID_FILES[name])}',
-                    f'echo "${upper}_PUBKEYS" | tee {rel(PUBKEY_FILES[name])}',
-                    f'envelope format "${upper}_XID" | tee {rel(XID_FORMAT_FILES[name])}',
+                    # Show the formatted output
+                    f'envelope format "${upper}_XID"',
                 ],
             )
 
@@ -428,15 +422,12 @@ def main() -> None:
             shell,
             "Assembling edition content envelope",
             [
-                # Use shell variables for intermediate processing
                 'CONTENT_SUBJECT=$(envelope subject type string "Welcome to the Gordian Club!")',
                 'CONTENT_CLEAR=$(echo "$CONTENT_SUBJECT" | envelope assertion add pred-obj string "title" string "Genesis Edition")',
                 'CONTENT_WRAPPED=$(envelope subject type wrapped "$CONTENT_CLEAR")',
-                # Save final results
-                f'echo "$CONTENT_CLEAR" | tee {rel(CONTENT_CLEAR)}',
-                f'echo "$CONTENT_WRAPPED" | tee {rel(CONTENT_WRAPPED)}',
-                f'envelope format "$CONTENT_CLEAR" | tee {rel(CONTENT_CLEAR_FORMAT)}',
-                f'envelope format "$CONTENT_WRAPPED" | tee {rel(CONTENT_FORMAT)}',
+                # Show formatted output
+                'envelope format "$CONTENT_CLEAR"',
+                'envelope format "$CONTENT_WRAPPED"',
             ],
         )
 
@@ -450,10 +441,10 @@ def main() -> None:
             shell,
             "Starting provenance mark chain",
             [
-                f'provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" | tee {rel(PROVENANCE_NEW_LOG)}',
-                f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown | tee {rel(PROVENANCE_GENESIS)}',
+                f'provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition"',
+                f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown',
                 f'GENESIS_MARK=$(provenance print {rel(PROV_DIR)} --start 0 --end 0 --format ur)',
-                f'echo "$GENESIS_MARK" | tee {rel(GENESIS_MARK)}',
+                f'echo "$GENESIS_MARK"',  # Show the UR we captured
             ],
         )
 
@@ -511,7 +502,7 @@ def main() -> None:
             shell,
             "Formatting SSKR-recovered content",
             [
-                f'envelope format "$(cat {rel(CONTENT_FROM_SSKR)})" | tee {rel(CONTENT_FROM_SSKR_FORMAT)}',
+                f'envelope format "$(cat {rel(CONTENT_FROM_SSKR)})"',
             ],
         )
 
@@ -528,7 +519,7 @@ def main() -> None:
             shell,
             "Formatting permit-recovered content",
             [
-                f'envelope format "$(cat {rel(CONTENT_FROM_PERMIT)})" | tee {rel(CONTENT_FROM_PERMIT_FORMAT)}',
+                f'envelope format "$(cat {rel(CONTENT_FROM_PERMIT)})"',
             ],
         )
 
