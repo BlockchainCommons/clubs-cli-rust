@@ -68,7 +68,7 @@ provenance print "$PROV_DIR" --start 0 --end 0 --format ur | tee "$DEMO_DIR/gene
 
 step "Composing genesis edition with clubs-cli"
 COMPOSE_LOG="$DEMO_DIR/clubs-edition-init.log"
-if RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \
+RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \
   --publisher "@$DEMO_DIR/publisher.xid.ur" \
   --content "@$DEMO_DIR/content.env.ur" \
   --provenance "@$DEMO_DIR/genesis-mark.ur" \
@@ -77,22 +77,23 @@ if RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \
   --sskr 2of3 \
   --summary \
   --out-dir "$DEMO_DIR" \
-  2>&1 | tee "$COMPOSE_LOG"; then
-  step "Edition composed successfully. URs written to $DEMO_DIR"
+  2>&1 | tee "$COMPOSE_LOG"
 
-  EDITION_FILE="$DEMO_DIR/edition.ur"
-  EDITION_UR="$(cat "$EDITION_FILE")"
+step "Edition composed successfully. URs written to $DEMO_DIR"
 
-  step "Inspecting composed edition"
-  INSPECT_STDOUT=$(
-    RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \
-      edition inspect \
-      --edition "@$EDITION_FILE" \
-      --publisher "@$DEMO_DIR/publisher.xid.ur" \
-      --summary \
-      --emit-permits \
-      2> >(tee "$DEMO_DIR/clubs-edition-inspect.log" >&2)
-  )
+EDITION_FILE="$DEMO_DIR/edition.ur"
+EDITION_UR="$(cat "$EDITION_FILE")"
+
+step "Inspecting composed edition"
+INSPECT_STDOUT=$(
+  RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \
+    edition inspect \
+    --edition "@$EDITION_FILE" \
+    --publisher "@$DEMO_DIR/publisher.xid.ur" \
+    --summary \
+    --emit-permits \
+    2> >(tee "$DEMO_DIR/clubs-edition-inspect.log" >&2)
+)
   INSPECT_FILE="$DEMO_DIR/clubs-edition-inspect.out"
   printf '%s\n' "$INSPECT_STDOUT" | tee "$INSPECT_FILE"
   if [[ -s "$INSPECT_FILE" ]]; then
@@ -135,8 +136,5 @@ if RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \
   done
   if [[ -z "$PERMIT_STDOUT" ]]; then
     echo "Failed to decrypt content with Alice's permit" >&2
+    exit 1
   fi
-else
-  step "clubs-cli is not yet capable of composing editions"
-  echo "Inspect $COMPOSE_LOG for the error output." >&2
-fi

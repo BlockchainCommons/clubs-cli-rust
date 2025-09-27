@@ -6,7 +6,7 @@ use bc_envelope::prelude::Envelope;
 use bc_ur::UREncodable;
 use clap::Args;
 use clubs::edition::Edition;
-use dcbor::prelude::CBOR;
+use dcbor::{CBORTaggedDecodable, prelude::CBOR};
 
 use crate::io::{self, RecipientDescriptor};
 
@@ -233,10 +233,18 @@ fn recover_key_from_permits(
         for keys in private_keys {
             match permit.decrypt(keys) {
                 Ok(data) => {
-                    let cbor = CBOR::try_from_data(&data)
-                        .context("permit decrypted to invalid CBOR data")?;
-                    let symmetric_key =
-                        SymmetricKey::try_from(cbor).map_err(|err| {
+                    let cbor = match CBOR::try_from_data(&data) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            let preview = hex::encode(&data[..data.len().min(32)]);
+                            return Err(anyhow!(
+                                "permit decrypted to invalid CBOR data: {err}; preview={preview}"
+                            ));
+                        }
+                    };
+                    let symmetric_key = <SymmetricKey as CBORTaggedDecodable>::
+                        from_tagged_cbor(cbor)
+                        .map_err(|err| {
                             anyhow!(
                                 "permit decrypted to unexpected payload: {err}"
                             )

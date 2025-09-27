@@ -106,6 +106,7 @@ The command line tools `provenance`, `envelope`, and others from this workspace 
 - Implemented `clubs edition inspect` with optional `--publisher/--verifier` input. The command now verifies signatures, enforces XID alignment, emits structured summaries, and can re-print normalized edition and permit URs via `--emit-permits`.
 - Added `clubs content decrypt`, supporting three recovery paths: direct symmetric key, public-key permits (when paired with `--identity` private material), and SSKR shares. The command reuses the verifier flow from `inspect`, cross-checks results when multiple inputs are provided, and reports the recovery sources plus content digest.
 - Completed `clubs permits derive`; it emits a `PublicKeyPermit` descriptor envelope (`type: "PublicKeyPermit"`, subject `PublicKeys`, optional `holder` assertion) that `edition compose` now accepts alongside raw XID docs or public keys.
+- Fixed public-key permit decryption: `content decrypt` now parses tagged symmetric keys correctly and the demo script confirms recovery via Alice's permit.
 
 ### I/O helpers
 - `io::RecipientDescriptor` can now retain an annotated member XID (even without a full XID document) and shares it via `member_xid()`.
@@ -119,4 +120,3 @@ The command line tools `provenance`, `envelope`, and others from this workspace 
 - Thread the content digest through to provenance (and update the demo to surface it) once the upstream plumbing is ready.
 - Add regression tests for the new commands (especially permit parsing and mixed decryption paths) to keep future refactors honest.
 - Consider exporting derived permit envelopes to a predictable directory so that future tooling can discover them without scraping logs.
-- Investigate why `clubs content decrypt` cannot yet recover the content key from Alice's public-key permit despite providing the matching private material.
