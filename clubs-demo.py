@@ -4,23 +4,270 @@
 from __future__ import annotations
 
 import os
-import shlex
+import uuid
+import time
+import locale
+import threading
+import selectors
 import subprocess
+import shlex
 import sys
 import textwrap
 from pathlib import Path
+from typing import Optional, Tuple
 
 BOX_PREFIX = "│ "
 
 
+class PersistentShell:
+    """
+    Persistent Bash shell that preserves state across commands and returns
+    combined stdout+stderr with accurate exit codes.
+    """
+
+    _CTRL_FD = 9
+    _RS = b"\x1e"  # ASCII Record Separator to minimize collision in user output
+
+    def __init__(
+        self,
+        cwd: Optional[str] = None,
+        env: Optional[dict] = None,
+        *,
+        bash_path: str = "bash",
+        login: bool = True,
+        encoding: Optional[str] = None,
+        read_chunk: int = 65536,
+        debug: bool = False
+    ):
+        """Initialize the persistent shell."""
+        if os.name != "posix":
+            raise OSError("PersistentShell requires a POSIX system.")
+
+        self._encoding = encoding or locale.getpreferredencoding(False)
+        self._read_chunk = int(read_chunk)
+        self._lock = threading.RLock()
+        self._residual = bytearray()
+
+        # Create a dedicated pipe for control input (FD 9 on the child side)
+        ctrl_r, ctrl_w = os.pipe()
+        self._ctrl_r = ctrl_r
+        self._ctrl_w = ctrl_w
+
+        # Build the bootstrap script using expert's corrected version
+        bootstrap = f"""\
+# PersistentShell bootstrap (executed via: bash -lc '<this script>')
+# stdin is already /dev/null from the parent; do not touch FD 0 here.
+
+# ── Debug channel on FD 200 (default: silent) ──────────────────────────────────
+if [[ -n "${{PSH_DEBUG_FILE:-}}" ]]; then
+  exec 200>>"${{PSH_DEBUG_FILE}}" || {{ echo "PSH: cannot open ${{PSH_DEBUG_FILE}}" >&2; exit 95; }}
+elif [[ -n "${{PSH_DEBUG:-}}" ]]; then
+  exec 200>/dev/stderr
+else
+  exec 200>/dev/null
+fi
+
+# ── Control FD: duplicate the inherited FD to 9 and close the original ─────────
+exec 9<&{ctrl_r} || {{ echo "PSH: dup {ctrl_r} -> 9 failed" >&200; exit 97; }}
+exec {ctrl_r}<&- || true
+
+# Sanitize prompts/hooks; keep normal bash semantics (no `set -e`)
+PS1=; PS2=; PROMPT_COMMAND=
+
+# Optional xtrace to FD 200
+if [[ -n "${{PSH_DEBUG:-}}" ]]; then
+  export BASH_XTRACEFD=200
+  set -x
+fi
+
+# Helpful traps to see unexpected exits/signals in debug mode
+trap 'rc=$?; echo "PSH: bootstrap exiting rc=$rc" >&200' EXIT
+trap 'echo "PSH: got signal" >&200' HUP INT TERM
+
+# ── Main loop: read two NUL‑terminated fields (token, command) from FD 9 ───────
+while IFS= read -r -d $'\\0' -u 9 __psh_token; do
+  if ! IFS= read -r -d $'\\0' -u 9 __psh_cmd; then
+    # Partial frame: return a special exit code (98) for this token
+    printf '\\x1ePSHEXIT:%s:%d\\x1e\\n' "$__psh_token" 98
+    continue
+  fi
+
+  # Execute in the *current* shell so env, cwd, aliases, functions persist
+  builtin eval -- "$__psh_cmd"
+  __psh_status=$?
+
+  # Emit sentinel to FD 1 (stderr already merged by parent)
+  builtin printf '\\x1ePSHEXIT:%s:%d\\x1e\\n' "$__psh_token" "$__psh_status"
+done
+
+# Clean EOF on control FD
+exit 0
+"""
+
+        # Compose bash argv with corrected approach
+        argv = [bash_path]
+        if login:
+            argv.append("-l")
+        argv += ["-c", bootstrap]
+
+        # Set up environment with debug options if requested
+        shell_env = env.copy() if env else os.environ.copy()
+        if debug:
+            shell_env["PSH_DEBUG"] = "1"
+
+        # Start Bash with corrected parameters - no stdin manipulation
+        self._proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,  # Key fix: don't use stdin for bootstrap
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=cwd,
+            env=shell_env,
+            bufsize=0,
+            close_fds=True,
+            pass_fds=(self._ctrl_r,),
+            text=False
+        )
+
+        # Prepare a selector to read from the combined output pipe efficiently
+        self._sel = selectors.DefaultSelector()
+        if self._proc.stdout is None:
+            raise RuntimeError("Failed to create pipes for persistent shell.")
+        self._sel.register(self._proc.stdout, selectors.EVENT_READ)
+
+        # Don't write bootstrap to stdin anymore - it's handled by -c argument
+        self._ctrl_wf = os.fdopen(self._ctrl_w, "wb", buffering=0)
+
+    def _assert_alive(self):
+        if self._proc.poll() is not None:
+            raise RuntimeError(f"Persistent shell has exited with code {self._proc.returncode}.")
+
+    def _write_frame(self, token: str, command: str):
+        try:
+            self._ctrl_wf.write(token.encode("utf-8") + b"\x00" +
+                                command.encode("utf-8") + b"\x00")
+            self._ctrl_wf.flush()
+        except BrokenPipeError:
+            raise RuntimeError("Persistent shell control channel closed.")
+
+    def _read_until_sentinel(self, token: str, timeout: Optional[float]) -> Tuple[bytes, int]:
+        """Read combined output until we see the sentinel for this token."""
+        self._assert_alive()
+
+        token_b = token.encode("utf-8")
+        prefix = self._RS + b"PSHEXIT:" + token_b + b":"
+        suffix = self._RS + b"\n"
+
+        buf = bytearray()
+        if self._residual:
+            buf += self._residual
+            self._residual = bytearray()
+
+        end_time = (time.monotonic() + timeout) if timeout else None
+
+        def time_left():
+            if end_time is None:
+                return None
+            return max(0.0, end_time - time.monotonic())
+
+        while True:
+            # Check if sentinel is already in buffer
+            idx = buf.find(prefix)
+            if idx != -1:
+                after = buf[idx + len(prefix):]
+                j = after.find(suffix)
+                if j != -1:
+                    exit_bytes = after[:j]
+                    try:
+                        exit_code = int(exit_bytes.decode("ascii", "strict"))
+                    except Exception:
+                        raise RuntimeError("Malformed sentinel from persistent shell.")
+                    before = bytes(buf[:idx])
+                    remaining = bytes(after[j + len(suffix):])
+                    self._residual.extend(remaining)
+                    return before, exit_code
+
+            # Need to read more
+            self._assert_alive()
+            timeout_this = time_left()
+            events = self._sel.select(timeout_this)
+            if not events:
+                if end_time is not None and time.monotonic() >= end_time:
+                    raise TimeoutError("Timed out waiting for command to complete.")
+                continue
+
+            for key, _ in events:
+                if self._proc.stdout:
+                    chunk = self._proc.stdout.read(self._read_chunk)
+                    if chunk is None:
+                        continue
+                    if chunk == b"":
+                        raise RuntimeError("Shell terminated unexpectedly while reading output.")
+                    buf.extend(chunk)
+
+    def run_command(self, command: str, *, timeout: Optional[float] = None) -> Tuple[str, int]:
+        """Execute a command in the persistent shell and return (combined_output, exit_code)."""
+        if "\x00" in command:
+            raise ValueError("Command may not contain NUL characters.")
+
+        with self._lock:
+            self._assert_alive()
+            token = uuid.uuid4().hex
+            self._write_frame(token, command)
+            out_bytes, exit_code = self._read_until_sentinel(token, timeout)
+            output = out_bytes.decode(self._encoding, errors="replace")
+            return output, exit_code
+
+    def close(self):
+        """Cleanly shut down the shell process."""
+        with self._lock:
+            try:
+                if hasattr(self, "_ctrl_wf") and self._ctrl_wf:
+                    self._ctrl_wf.close()
+            except Exception:
+                pass
+            try:
+                if self._proc.poll() is None:
+                    try:
+                        self._proc.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        self._proc.terminate()
+                        try:
+                            self._proc.wait(timeout=2.0)
+                        except subprocess.TimeoutExpired:
+                            self._proc.kill()
+            finally:
+                try:
+                    if self._proc.stdout:
+                        self._sel.unregister(self._proc.stdout)
+                except Exception:
+                    pass
+                try:
+                    if self._proc.stdout:
+                        self._proc.stdout.close()
+                except Exception:
+                    pass
+                try:
+                    os.close(self._ctrl_r)
+                except Exception:
+                    pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+
 def run_step(
+    shell: PersistentShell,
     title: str,
     commands: list[str] | tuple[str, ...] | str,
     commentary: str | None = None,
     *,
     stop_on_success: bool = False,
 ) -> list[str]:
-    """Execute commands and render the result in Markdown."""
+    """Execute commands using persistent shell and render the result in Markdown."""
 
     if isinstance(commands, str):
         command_list = [textwrap.dedent(commands).strip()]
@@ -46,18 +293,12 @@ def run_step(
         print(display_command)
 
         try:
-            result = subprocess.run(
-                ["bash", "-lc", command],
-                capture_output=True,
-                text=True,
-                check=True,
-                cwd=SCRIPT_DIR,
-                env=ENV,
-            )
-            output = (result.stdout + result.stderr).rstrip("\n")
+            output, exit_code = shell.run_command(command)
+            if exit_code != 0:
+                raise subprocess.CalledProcessError(exit_code, command, output=output)
             success = True
         except subprocess.CalledProcessError as error:
-            output = ((error.stdout or "") + (error.stderr or "")).rstrip("\n")
+            output = error.output if hasattr(error, 'output') else ""
             last_error = error
             if not stop_on_success:
                 if output:
@@ -69,6 +310,20 @@ def run_step(
                 raise SystemExit(error.returncode) from error
             failure_output = output
             continue
+        except Exception as error:
+            output = str(error)
+            last_error = subprocess.CalledProcessError(1, command, output=output)
+            if not stop_on_success:
+                if output:
+                    print("")
+                    for line in output.splitlines():
+                        print(f"{BOX_PREFIX}{line}")
+                print("```")
+                print("")
+                raise SystemExit(1) from error
+            failure_output = output
+            continue
+
         outputs.append(output)
         if output:
             aggregated_lines.extend(output.splitlines())
@@ -117,137 +372,165 @@ def sanitize_command(command: str) -> str:
 
 
 def main() -> None:
-    run_step(
-        "Checking prerequisites",
-        "for cmd in seedtool envelope provenance cargo; do command -v \"$cmd\"; done",
-    )
+    # Create persistent shell instance for efficient execution
+    with PersistentShell(cwd=str(SCRIPT_DIR), env=ENV, debug=False) as shell:
 
-    run_step(
-        "Preparing demo workspace",
-        f"rm -rf {qp(DEMO_DIR)} && mkdir -p {qp(DEMO_DIR)}",
-    )
-
-    run_step(
-        "Generating deterministic publisher seed",
-        f"seedtool --deterministic=CLUBS-DEMO --out seed | tee {qp(PUBLISHER_SEED)}",
-    )
-
-    run_step(
-        "Deriving publisher signing material",
-        [
-            f'envelope generate prvkeys --seed "$(cat {rel(PUBLISHER_SEED)})" | tee {rel(PUBLISHER_PRVKEYS)}',
-            f'envelope xid new "$(cat {rel(PUBLISHER_PRVKEYS)})" | tee {rel(PUBLISHER_XID)}',
-            f'envelope format "$(cat {rel(PUBLISHER_XID)})" | tee {rel(PUBLISHER_XID_FORMAT)}',
-        ],
-    )
-
-    for name, seed_tag in PARTICIPANTS:
-        upper = name.upper()
         run_step(
-            f"Creating XID document for {upper}",
+            shell,
+            "Checking prerequisites",
+            "for cmd in seedtool envelope provenance cargo; do command -v \"$cmd\"; done",
+        )
+
+        run_step(
+            shell,
+            "Preparing demo workspace",
+            f"rm -rf {qp(DEMO_DIR)} && mkdir -p {qp(DEMO_DIR)}",
+        )
+
+        run_step(
+            shell,
+            "Generating deterministic publisher seed",
+            # Use shell variable instead of file for efficiency
+            "PUBLISHER_SEED=$(seedtool --deterministic=CLUBS-DEMO --out seed)",
+        )
+
+        run_step(
+            shell,
+            "Deriving publisher signing material",
             [
-                f'seedtool --deterministic={seed_tag} --out seed | tee {rel(SEED_FILES[name])}',
-                f'envelope generate prvkeys --seed "$(cat {rel(SEED_FILES[name])})" | tee {rel(PRVKEY_FILES[name])}',
-                f'envelope generate pubkeys "$(cat {rel(PRVKEY_FILES[name])})" | tee {rel(PUBKEY_FILES[name])}',
-                f'envelope xid new "$(cat {rel(PRVKEY_FILES[name])})" | tee {rel(XID_FILES[name])}',
-                f'envelope format "$(cat {rel(XID_FILES[name])})" | tee {rel(XID_FORMAT_FILES[name])}',
+                # Use shell variables instead of file I/O
+                'PUBLISHER_PRVKEYS=$(envelope generate prvkeys --seed "$PUBLISHER_SEED")',
+                'PUBLISHER_XID=$(envelope xid new "$PUBLISHER_PRVKEYS")',
+                f'echo "$PUBLISHER_XID" | tee {rel(PUBLISHER_XID)}',  # Still save for later file access
+                f'envelope format "$PUBLISHER_XID" | tee {rel(PUBLISHER_XID_FORMAT)}',
             ],
         )
 
-    run_step(
-        "Assembling edition content envelope",
-        [
-            f'envelope subject type string "Welcome to the Gordian Club!" | tee {rel(CONTENT_SUBJECT_TMP)}',
-            f'cat {rel(CONTENT_SUBJECT_TMP)} | envelope assertion add pred-obj string "title" string "Genesis Edition" | tee {rel(CONTENT_CLEAR)}',
-            f'rm {rel(CONTENT_SUBJECT_TMP)}',
-            f'envelope subject type wrapped "$(cat {rel(CONTENT_CLEAR)})" | tee {rel(CONTENT_WRAPPED)}',
-            f'envelope format "$(cat {rel(CONTENT_CLEAR)})" | tee {rel(CONTENT_CLEAR_FORMAT)}',
-            f'envelope format "$(cat {rel(CONTENT_WRAPPED)})" | tee {rel(CONTENT_FORMAT)}',
-        ],
-    )
+        for name, seed_tag in PARTICIPANTS:
+            upper = name.upper()
+            run_step(
+                shell,
+                f"Creating XID document for {upper}",
+                [
+                    # Use shell variables instead of intermediate files
+                    f'{upper}_SEED=$(seedtool --deterministic={seed_tag} --out seed)',
+                    f'{upper}_PRVKEYS=$(envelope generate prvkeys --seed "${upper}_SEED")',
+                    f'{upper}_PUBKEYS=$(envelope generate pubkeys "${upper}_PRVKEYS")',
+                    f'{upper}_XID=$(envelope xid new "${upper}_PRVKEYS")',
+                    # Save the final results for file-based access later
+                    f'echo "${upper}_XID" | tee {rel(XID_FILES[name])}',
+                    f'echo "${upper}_PUBKEYS" | tee {rel(PUBKEY_FILES[name])}',
+                    f'envelope format "${upper}_XID" | tee {rel(XID_FORMAT_FILES[name])}',
+                ],
+            )
 
-    run_step(
-        "Deriving deterministic provenance seed",
-        f"seedtool --deterministic=PROVENANCE-DEMO --count 32 --out seed | tee {qp(PROVENANCE_SEED)}",
-    )
+        run_step(
+            shell,
+            "Assembling edition content envelope",
+            [
+                # Use shell variables for intermediate processing
+                'CONTENT_SUBJECT=$(envelope subject type string "Welcome to the Gordian Club!")',
+                'CONTENT_CLEAR=$(echo "$CONTENT_SUBJECT" | envelope assertion add pred-obj string "title" string "Genesis Edition")',
+                'CONTENT_WRAPPED=$(envelope subject type wrapped "$CONTENT_CLEAR")',
+                # Save final results
+                f'echo "$CONTENT_CLEAR" | tee {rel(CONTENT_CLEAR)}',
+                f'echo "$CONTENT_WRAPPED" | tee {rel(CONTENT_WRAPPED)}',
+                f'envelope format "$CONTENT_CLEAR" | tee {rel(CONTENT_CLEAR_FORMAT)}',
+                f'envelope format "$CONTENT_WRAPPED" | tee {rel(CONTENT_FORMAT)}',
+            ],
+        )
 
-    run_step(
-        "Starting provenance mark chain",
-        [
-            f'provenance new {rel(PROV_DIR)} --seed "$(cat {rel(PROVENANCE_SEED)})" --comment "Genesis edition" | tee {rel(PROVENANCE_NEW_LOG)}',
-            f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown | tee {rel(PROVENANCE_GENESIS)}',
-            f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format ur | tee {rel(GENESIS_MARK)}',
-        ],
-    )
+        run_step(
+            shell,
+            "Deriving deterministic provenance seed",
+            "PROVENANCE_SEED=$(seedtool --deterministic=PROVENANCE-DEMO --count 32 --out seed)",
+        )
 
-    run_step(
-        "Composing genesis edition",
-        f"""
-        RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \
-          --publisher "@{PUBLISHER_XID}" \
-          --content "@{CONTENT_WRAPPED}" \
-          --provenance "@{GENESIS_MARK}" \
-          --permit "@{XID_FILES['alice']}" \
-          --permit "@{PUBKEY_FILES['bob']}" \
-          --sskr 2of3 \
-          --summary \
-          --out-dir {qp(DEMO_DIR)} \
-          2>&1 | tee {qp(COMPOSE_LOG)}
-        """,
-    )
+        run_step(
+            shell,
+            "Starting provenance mark chain",
+            [
+                f'provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" | tee {rel(PROVENANCE_NEW_LOG)}',
+                f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown | tee {rel(PROVENANCE_GENESIS)}',
+                f'GENESIS_MARK=$(provenance print {rel(PROV_DIR)} --start 0 --end 0 --format ur)',
+                f'echo "$GENESIS_MARK" | tee {rel(GENESIS_MARK)}',
+            ],
+        )
 
-    inspect_output = run_step(
-        "Inspecting composed edition",
-        [
-            (
-                "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
-                f"edition inspect "
-                f"--edition \"@{rel(EDITION_FILE)}\" "
-                f"--publisher \"@{rel(PUBLISHER_XID)}\" "
-                f"--summary "
-                f"--emit-permits"
-            ),
-        ],
-    )
-    process_inspection_output(inspect_output[-1] if inspect_output else "")
+        run_step(
+            shell,
+            "Composing genesis edition",
+            f"""
+            RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \\
+              --publisher "$PUBLISHER_XID" \\
+              --content "$CONTENT_WRAPPED" \\
+              --provenance "$GENESIS_MARK" \\
+              --permit "$ALICE_XID" \\
+              --permit "$BOB_PUBKEYS" \\
+              --sskr 2of3 \\
+              --summary \\
+              --out-dir {qp(DEMO_DIR)} \\
+              2>&1 | tee {qp(COMPOSE_LOG)}
+            """,
+        )
 
-    sskr_output = run_step(
-        "Decrypting content via SSKR shares",
-        [
-            (
-                "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
-                f"content decrypt "
-                f"--edition \"@{rel(EDITION_FILE)}\" "
-                f"--publisher \"@{rel(PUBLISHER_XID)}\" "
-                f"--sskr \"@{rel(SSKR_SHARES[0])}\" "
-                f"--sskr \"@{rel(SSKR_SHARES[1])}\" "
-                f"--emit-ur"
-            ),
-        ],
-    )
-    process_sskr_output(sskr_output[-1] if sskr_output else "")
+        inspect_output = run_step(
+            shell,
+            "Inspecting composed edition",
+            [
+                (
+                    "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
+                    f"edition inspect "
+                    f"--edition \"@{rel(EDITION_FILE)}\" "
+                    f"--publisher \"$PUBLISHER_XID\" "
+                    f"--summary "
+                    f"--emit-permits"
+                ),
+            ],
+        )
+        process_inspection_output(inspect_output[-1] if inspect_output else "")
 
-    run_step(
-        "Formatting SSKR-recovered content",
-        [
-            f'envelope format "$(cat {rel(CONTENT_FROM_SSKR)})" | tee {rel(CONTENT_FROM_SSKR_FORMAT)}',
-        ],
-    )
+        sskr_output = run_step(
+            shell,
+            "Decrypting content via SSKR shares",
+            [
+                (
+                    "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
+                    f"content decrypt "
+                    f"--edition \"@{rel(EDITION_FILE)}\" "
+                    f"--publisher \"$PUBLISHER_XID\" "
+                    f"--sskr \"@{rel(SSKR_SHARES[0])}\" "
+                    f"--sskr \"@{rel(SSKR_SHARES[1])}\" "
+                    f"--emit-ur"
+                ),
+            ],
+        )
+        process_sskr_output(sskr_output[-1] if sskr_output else "")
 
-    permit_commands = build_permit_commands()
-    permit_outputs = run_step(
-        "Decrypting content with Alice's permit",
-        permit_commands,
-        stop_on_success=True,
-    )
-    process_permit_output(permit_outputs)
+        run_step(
+            shell,
+            "Formatting SSKR-recovered content",
+            [
+                f'envelope format "$(cat {rel(CONTENT_FROM_SSKR)})" | tee {rel(CONTENT_FROM_SSKR_FORMAT)}',
+            ],
+        )
 
-    run_step(
-        "Formatting permit-recovered content",
-        [
-            f'envelope format "$(cat {rel(CONTENT_FROM_PERMIT)})" | tee {rel(CONTENT_FROM_PERMIT_FORMAT)}',
-        ],
-    )
+        permit_commands = build_permit_commands()
+        permit_outputs = run_step(
+            shell,
+            "Decrypting content with Alice's permit",
+            permit_commands,
+            stop_on_success=True,
+        )
+        process_permit_output(permit_outputs)
+
+        run_step(
+            shell,
+            "Formatting permit-recovered content",
+            [
+                f'envelope format "$(cat {rel(CONTENT_FROM_PERMIT)})" | tee {rel(CONTENT_FROM_PERMIT_FORMAT)}',
+            ],
+        )
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -397,9 +680,9 @@ def build_permit_commands() -> list[str]:
                 "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
                 f"content decrypt "
                 f"--edition \"@{rel(EDITION_FILE)}\" "
-                f"--publisher \"@{rel(PUBLISHER_XID)}\" "
+                f"--publisher \"$PUBLISHER_XID\" "
                 f"--permit \"@{rel(permit)}\" "
-                f"--identity \"@{rel(PRVKEY_FILES['alice'])}\" "
+                f"--identity \"$ALICE_PRVKEYS\" "
                 f"--emit-ur"
             )
         )
