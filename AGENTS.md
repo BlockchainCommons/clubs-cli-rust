@@ -18,6 +18,9 @@ Workspace crates that provide key APIs:
 - ../known-values/
 - ../provenance-mark/
 
+- Make sure you understand `queries.rs` and examine the tests in the `bc-envelope` crate for many functional examples.
+- Make sure you understand traits like `URDecodable`, `UREncodable`, `URCodable`, `EnvelopeEncodable`, `EnvelopeDecodable`, `CBOREncodable`, `CBORDecodable`, `CBORCodable`, `CBORTaggedEncodable`, `CBORTaggedDecodable`, `CBORTaggedCodable`, and the blanket implementations for these types, which are frequently linked to `From`/`TryFrom` implementations.
+
 ## Current Task
 
 Implement the new `clubs-cli` tool. Focus first on single-publisher clubs and reuse functionality already available in sibling CLIs:
@@ -79,3 +82,41 @@ The command line tools `provenance`, `envelope`, and others from this workspace 
 - Capability permits and adaptor signatures once the underlying crates expose production APIs.
 - Provenance automation: optional command to call `provenance-mark-cli` under the hood or to manage VRF-based chains using `clubs::frost::pm`.
 - Serialization profiles beyond raw URs (e.g., QR, Bytewords) when integration with mobile apps warrants it.
+
+## Progress Update (2025-09-27)
+
+### Workflow implementation status
+- Implemented `clubs-cli edition compose` and `clubs-cli init`, wiring publisher XID documents (including private keys) into the composer, enforcing genesis/previous-mark rules, and emitting edition URs plus optional SSKR shards.
+- Added `clubs-cli/clubs-demo.sh`, a reproducible walkthrough that regenerates deterministic seeds/XID docs, assembles content, advances provenance, and exercises the new compose pipeline. The script now lives beside the binary, writes outputs into `clubs-cli/clubs-demo/`, and demonstrates the current limitations (inspection/decrypt commands still pending).
+- Composer summary output documents the recipients, SSKR spec, provenance sequence, and where artifacts are written; stdout stays machine-friendly (UR per line) for downstream tooling.
+
+### Envelope digest expectations
+- Envelopes carry a stable digest that survives obscuring operations (encryption, compression, elision) because the digest is committed into the obscured representation and AAD.
+- Wrapping *does* change the digest; therefore, edition content must arrive as an already wrapped envelope with **no additional assertions** so the digest we bind into permits and provenance remains stable after encryption.
+- The composer currently wraps cleartext content on ingest if necessary, but upcoming validation will reject content that carries extra assertions or is unwrapped to align with the stability requirement. CLI now enforces this precondition and surfaces an actionable error if assertions remain.
+
+### Provenance tooling integration
+- Extended `provenance` (new/next) with shared `--info-hex`/`--info-ur[ --info-ur-tag ]` parsing so marks can embed dCBOR payloads (e.g., the content digest). Known UR types automatically derive their registered CBOR tags; unknown types require an explicit tag override.
+- These improvements let us feed the wrapped-content digest (as `ur:digest/...` or hex CBOR) into the provenance mark `info` field without building ad hoc plumbing inside `clubs-cli`.
+- JSON mark snapshots continue to store the `info` payload in base64, while the CLI accepts both base64 and hex inputs for convenience.
+
+## Progress Update (2025-09-28)
+
+### CLI coverage
+- Implemented `clubs edition inspect` with optional `--publisher/--verifier` input. The command now verifies signatures, enforces XID alignment, emits structured summaries, and can re-print normalized edition and permit URs via `--emit-permits`.
+- Added `clubs content decrypt`, supporting three recovery paths: direct symmetric key, public-key permits (when paired with `--identity` private material), and SSKR shares. The command reuses the verifier flow from `inspect`, cross-checks results when multiple inputs are provided, and reports the recovery sources plus content digest.
+- Completed `clubs permits derive`; it emits a `PublicKeyPermit` descriptor envelope (`type: "PublicKeyPermit"`, subject `PublicKeys`, optional `holder` assertion) that `edition compose` now accepts alongside raw XID docs or public keys.
+
+### I/O helpers
+- `io::RecipientDescriptor` can now retain an annotated member XID (even without a full XID document) and shares it via `member_xid()`.
+- Added parsing for permit envelopes, private-key URs/XID documents, and bare XID strings (UR form or `XID(...)`). These are reused across `compose`, `inspect`, `content decrypt`, and `permits derive`.
+- Brought in `dcbor` to decode symmetric keys carried inside sealed messages when unwrapping public-key permits.
+
+### Demo workflow
+- `clubs-demo.sh` now wraps the content envelope before composition, runs `edition inspect` to harvest permit URs, and exercises both SSKR- and permit-based decryptions. Resulting URs plus formatted envelopes are saved under `clubs-demo/` for reference.
+
+### Updated next steps
+- Thread the content digest through to provenance (and update the demo to surface it) once the upstream plumbing is ready.
+- Add regression tests for the new commands (especially permit parsing and mixed decryption paths) to keep future refactors honest.
+- Consider exporting derived permit envelopes to a predictable directory so that future tooling can discover them without scraping logs.
+- Investigate why `clubs content decrypt` cannot yet recover the content key from Alice's public-key permit despite providing the matching private material.

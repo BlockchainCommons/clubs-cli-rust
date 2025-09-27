@@ -1,20 +1,26 @@
 use std::{
     fs,
     io::{self, Read},
+    panic,
     path::Path,
 };
 
 use anyhow::{Context, Result, bail};
-use bc_components::{PublicKeys, SSKRShare, SealedMessage, SymmetricKey};
+use bc_components::{
+    PrivateKeyBase, PrivateKeys, PrivateKeysProvider, PublicKeys, SSKRShare,
+    SealedMessage, SymmetricKey, XID, XIDProvider,
+};
 use bc_envelope::prelude::*;
 use bc_ur::UR;
 use bc_xid::{HasPermissions, Privilege, XIDDocument};
+use known_values::HOLDER;
 use provenance_mark::ProvenanceMark;
 
 /// Descriptor for a permit recipient.
 pub struct RecipientDescriptor {
     pub_keys: PublicKeys,
     xid_document: Option<XIDDocument>,
+    annotated_xid: Option<XID>,
 }
 
 impl RecipientDescriptor {
@@ -22,8 +28,18 @@ impl RecipientDescriptor {
     pub fn public_keys(&self) -> &PublicKeys { &self.pub_keys }
 
     /// Returns the optional XID document if one was provided.
+    #[allow(dead_code)]
     pub fn xid_document(&self) -> Option<&XIDDocument> {
         self.xid_document.as_ref()
+    }
+
+    /// Returns the annotated member XID, if present.
+    pub fn member_xid(&self) -> Option<XID> {
+        if let Some(doc) = self.xid_document.as_ref() {
+            Some(doc.xid())
+        } else {
+            self.annotated_xid
+        }
     }
 }
 
@@ -194,11 +210,27 @@ pub fn parse_recipient_descriptor(spec: &str) -> Result<RecipientDescriptor> {
 
     if let Ok(doc) = decode_xid_document(trimmed) {
         let pub_keys = select_public_keys(&doc)?;
-        return Ok(RecipientDescriptor { pub_keys, xid_document: Some(doc) });
+        return Ok(RecipientDescriptor {
+            pub_keys,
+            xid_document: Some(doc),
+            annotated_xid: None,
+        });
+    }
+
+    if let Some((pub_keys, member_xid)) = decode_public_key_permit(trimmed)? {
+        return Ok(RecipientDescriptor {
+            pub_keys,
+            xid_document: None,
+            annotated_xid: member_xid,
+        });
     }
 
     let keys = decode_public_keys(trimmed)?;
-    Ok(RecipientDescriptor { pub_keys: keys, xid_document: None })
+    Ok(RecipientDescriptor {
+        pub_keys: keys,
+        xid_document: None,
+        annotated_xid: None,
+    })
 }
 
 fn select_public_keys(doc: &XIDDocument) -> Result<PublicKeys> {
@@ -219,6 +251,152 @@ fn select_public_keys(doc: &XIDDocument) -> Result<PublicKeys> {
     }
 
     bail!("XID document does not contain any public keys");
+}
+
+fn decode_public_key_permit(
+    raw: &str,
+) -> Result<Option<(PublicKeys, Option<XID>)>> {
+    let Ok(envelope) = decode_envelope(raw) else {
+        return Ok(None);
+    };
+
+    if !envelope.has_type_envelope("PublicKeyPermit") {
+        return Ok(None);
+    }
+
+    let subject = envelope.subject();
+    if subject.is_obscured() {
+        bail!("public-key permit subject is obscured");
+    }
+    let public_keys = subject
+        .extract_subject::<PublicKeys>()
+        .with_context(|| "public-key permit subject must be public keys")?;
+
+    let holder_assertion =
+        envelope.optional_assertion_with_predicate(HOLDER)?;
+    let holder = match holder_assertion {
+        Some(assertion) => Some(assertion.extract_object::<XID>()?),
+        None => None,
+    };
+
+    let allowed = if holder.is_some() { 1 } else { 0 };
+    if envelope.assertions().len() > allowed {
+        bail!("public-key permit contains unsupported assertions");
+    }
+
+    Ok(Some((public_keys, holder)))
+}
+
+/// Parse private keys from either a UR or an XID document containing them.
+pub fn parse_private_keys(spec: &str) -> Result<PrivateKeys> {
+    let raw = load_from_spec(spec)?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        bail!("empty private keys input");
+    }
+
+    if let Ok(keys) = decode_private_keys(trimmed) {
+        return Ok(keys);
+    }
+
+    if let Ok(base) = decode_private_key_base(trimmed) {
+        return Ok(base.private_keys());
+    }
+
+    let doc = decode_xid_document(trimmed)?;
+    extract_private_keys(&doc)
+        .with_context(|| "XID document does not contain private keys")
+}
+
+fn decode_private_keys(raw: &str) -> Result<PrivateKeys> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        bail!("empty private keys input");
+    }
+
+    if let Ok(keys) = PrivateKeys::from_ur_string(trimmed) {
+        return Ok(keys);
+    }
+
+    let compact = tighten_ur(trimmed);
+    if compact != trimmed {
+        if let Ok(keys) = PrivateKeys::from_ur_string(&compact) {
+            return Ok(keys);
+        }
+    }
+
+    let ur = UR::from_ur_string(compact)
+        .with_context(|| "failed to parse private keys UR")?;
+    match ur.ur_type_str() {
+        "crypto-prvkeys" => PrivateKeys::from_ur(&ur)
+            .with_context(|| "failed to decode private keys from UR"),
+        other => bail!("unsupported UR type '{other}' for private keys"),
+    }
+}
+
+fn decode_private_key_base(raw: &str) -> Result<PrivateKeyBase> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        bail!("empty private key base input");
+    }
+
+    if let Ok(base) = PrivateKeyBase::from_ur_string(trimmed) {
+        return Ok(base);
+    }
+
+    let compact = tighten_ur(trimmed);
+    if compact != trimmed {
+        if let Ok(base) = PrivateKeyBase::from_ur_string(&compact) {
+            return Ok(base);
+        }
+    }
+
+    let ur = UR::from_ur_string(compact)
+        .with_context(|| "failed to parse private key base UR")?;
+    match ur.ur_type_str() {
+        "crypto-prvkey-base" => PrivateKeyBase::from_ur(&ur)
+            .with_context(|| "failed to decode private key base from UR"),
+        other => bail!("unsupported UR type '{other}' for private key base"),
+    }
+}
+
+fn extract_private_keys(doc: &XIDDocument) -> Result<PrivateKeys> {
+    if let Some(key) =
+        doc.inception_key().and_then(|k| k.private_keys().cloned())
+    {
+        return Ok(key);
+    }
+
+    for key in doc.keys() {
+        if let Some(private_keys) = key.private_keys() {
+            return Ok(private_keys.clone());
+        }
+    }
+
+    bail!("no private keys available in XID document")
+}
+
+/// Parse a standalone XID from UR or canonical string forms.
+pub fn parse_xid_value(spec: &str) -> Result<XID> {
+    let trimmed = spec.trim();
+    if trimmed.is_empty() {
+        bail!("empty XID value");
+    }
+
+    let inner = trimmed
+        .strip_prefix("XID(")
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(trimmed)
+        .trim();
+
+    if let Ok(xid) = XID::from_ur_string(inner) {
+        return Ok(xid);
+    }
+
+    match panic::catch_unwind(|| XID::from_hex(inner)) {
+        Ok(xid) => Ok(xid),
+        Err(_) => bail!("failed to parse XID value"),
+    }
 }
 
 /// Parse a sealed message permit.
@@ -250,6 +428,7 @@ pub fn parse_sealed_message(spec: &str) -> Result<SealedMessage> {
 }
 
 /// Parse an SSKR share.
+#[allow(dead_code)]
 pub fn parse_sskr_share(spec: &str) -> Result<SSKRShare> {
     let raw = load_from_spec(spec)?;
     let trimmed = raw.trim();
