@@ -529,7 +529,7 @@ def main() -> None:
             ]),
         )
 
-        permit_script = """
+        script = """
 typeset -g PERMIT_CONTENT_UR=""
 for permit in "${PERMIT_URS[@]}"; do
   if PERMIT_OUTPUT=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
@@ -539,7 +539,7 @@ for permit in "${PERMIT_URS[@]}"; do
     --permit "$permit" \\
     --identity "$ALICE_PRVKEYS" \\
     --emit-ur); then
-    PERMIT_CONTENT_UR=${PERMIT_OUTPUT%%$'\n'*}
+    PERMIT_CONTENT_UR=${PERMIT_OUTPUT%%$'\\n'*}
     echo "$PERMIT_CONTENT_UR"
     envelope format "$PERMIT_CONTENT_UR"
     break
@@ -550,10 +550,10 @@ done
         run_step(
             shell,
             "Decrypting content with Alice's permit",
-            permit_script,
+            script
         )
 
-        sskr_script = """
+        script = """
 SSKR_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
   content decrypt \\
   --edition "$EDITION_UR" \\
@@ -561,26 +561,14 @@ SSKR_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -
   --sskr "${SSKR_URS[1]}" \\
   --sskr "${SSKR_URS[2]}" \\
   --emit-ur)
-SSKR_CONTENT_UR=${SSKR_CONTENT_UR%%$'\n'*}
+SSKR_CONTENT_UR=${SSKR_CONTENT_UR%%$'\\n'*}
 echo "$SSKR_CONTENT_UR"
 envelope format "$SSKR_CONTENT_UR"
 """
-
         run_step(
             shell,
             "Decrypting content via SSKR shares",
-            """
-SSKR_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
-  content decrypt \\
-  --edition "$EDITION_UR" \\
-  --publisher "$PUBLISHER_XID" \\
-  --sskr "${SSKR_URS[1]}" \\
-  --sskr "${SSKR_URS[2]}" \\
-  --emit-ur)
-SSKR_CONTENT_UR=${SSKR_CONTENT_UR%%$'\n'*}
-echo "$SSKR_CONTENT_UR"
-envelope format "$SSKR_CONTENT_UR"
-"""
+            script
         )
 
 
