@@ -1,5 +1,6 @@
 pub mod compose;
-pub mod inspect;
+pub mod permits;
+pub mod verify;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -14,13 +15,16 @@ pub struct CommandArgs {
 pub enum Commands {
     /// Compose and sign an edition.
     Compose(compose::CommandArgs),
-    /// Inspect and verify an edition.
-    Inspect(inspect::CommandArgs),
+    /// Verify the signature and provenance of an edition.
+    Verify(verify::CommandArgs),
+    /// Extract sealed permits from an edition.
+    Permits(permits::CommandArgs),
 }
 
 pub fn exec(args: CommandArgs) -> Result<()> {
     match args.command {
         Commands::Compose(args) => compose::exec(args),
-        Commands::Inspect(args) => inspect::exec(args),
+        Commands::Verify(args) => verify::exec(args),
+        Commands::Permits(args) => permits::exec(args),
     }
 }

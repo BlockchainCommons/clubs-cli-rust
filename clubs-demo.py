@@ -482,13 +482,6 @@ def main() -> None:
             ],
         )
 
-        sskr_shares = [
-            register_path(DEMO_DIR / "sskr-share-g1-1.ur"),
-            register_path(DEMO_DIR / "sskr-share-g1-2.ur"),
-            register_path(DEMO_DIR / "sskr-share-g1-3.ur"),
-        ]
-        sskr_share_words = ' '.join(qp(path) for path in sskr_shares)
-
         run_step(shell,
             "Composing genesis edition",
             "\n".join([
@@ -509,39 +502,68 @@ def main() -> None:
                 "typeset -ga EDITION_URS=(\"${(@f)${EDITION_RAW%$'\\n'}}\")",
                 "EDITION_UR=${EDITION_URS[1]}",
                 "typeset -ga SSKR_URS=(\"${EDITION_URS[@]:1}\")",
-                f"typeset -ga SSKR_SHARE_PATHS=({sskr_share_words})",
-                "typeset -i idx=1",
-                "for share in ${SSKR_URS[@]}; do",
-                "  share_path=${SSKR_SHARE_PATHS[idx]}",
-                "  print -r -- \"$share\" > \"$share_path\"",
-                "  (( idx++ ))",
-                "done",
-                'print -rl -- "${EDITION_URS[@]}"',
+                'for ur in "${EDITION_URS[@]}"; do print -r -- "$ur"; envelope format "$ur"; echo ""; done',
             ]),
         )
 
         run_step(shell,
-            "Formatting captured edition URs",
-            [
-                'for ur in "${EDITION_URS[@]}"; do envelope format "$ur"; echo ""; done',
-            ],
-        )
-
-        inspect_output = run_step(
-            shell,
-            "Inspecting composed edition",
+            "Verifying composed edition",
             [
                 (
                     "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
-                    f"edition inspect "
+                    f"edition verify "
                     f"--edition \"$EDITION_UR\" "
-                    f"--publisher \"$PUBLISHER_XID\" "
-                    f"--summary "
-                    f"--emit-permits"
+                    f"--publisher \"$PUBLISHER_XID\""
                 ),
             ],
         )
-        process_inspection_output(inspect_output[-1] if inspect_output else "")
+
+        permits_output = run_step(
+            shell,
+            "Extracting permit URs",
+            [
+                (
+                    "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
+                    f"edition permits "
+                    f"--edition \"$EDITION_UR\""
+                ),
+            ],
+        )
+        permit_urs = process_permits_output(permits_output[-1] if permits_output else "")
+
+        if not permit_urs:
+            raise RuntimeError("No permit URs extracted from edition")
+
+        permit_commands = [
+            (
+                "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
+                f"content decrypt "
+                f"--edition \"$EDITION_UR\" "
+                f"--publisher \"$PUBLISHER_XID\" "
+                f"--permit \"{permit}\" "
+                f"--identity \"$ALICE_PRVKEYS\" "
+                f"--emit-ur | grep '^ur:' | head -n1"
+            )
+            for permit in permit_urs
+        ]
+
+        permit_outputs = run_step(
+            shell,
+            "Decrypting content with Alice's permit",
+            permit_commands,
+            stop_on_success=True,
+        )
+
+        permit_content_ur = process_permit_output(permit_outputs)
+
+        run_step(shell,
+            "Decrypting content with Alice's permit",
+            [
+                f'print -r -- "{permit_content_ur}"',
+                f'envelope format "{permit_content_ur}"',
+                'echo ""',
+            ],
+        )
 
         sskr_output = run_step(
             shell,
@@ -549,41 +571,26 @@ def main() -> None:
             [
                 (
                     "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
-                    f"content decrypt "
-                    f"--edition \"$EDITION_UR\" "
-                    f"--publisher \"$PUBLISHER_XID\" "
-                    f"--sskr \"@{rel(sskr_shares[0])}\" "
-                    f"--sskr \"@{rel(sskr_shares[1])}\" "
-                    f"--emit-ur"
+                    "content decrypt "
+                    "--edition \"$EDITION_UR\" "
+                    "--publisher \"$PUBLISHER_XID\" "
+                    "--sskr \"${SSKR_URS[1]}\" "
+                    "--sskr \"${SSKR_URS[2]}\" "
+                    "--emit-ur | grep '^ur:' | head -n1"
                 ),
             ],
         )
-        content_from_sskr = register_path(DEMO_DIR / "content.from-sskr.ur")
-        process_sskr_output(sskr_output[-1] if sskr_output else "", content_from_sskr)
+        sskr_content_ur = process_sskr_output(sskr_output[-1] if sskr_output else "")
 
         run_step(shell,
-            "Formatting SSKR-recovered content",
+            "Decrypting content via SSKR shares",
             [
-                f'envelope format "$(cat {rel(content_from_sskr)})"',
+                f'print -r -- "{sskr_content_ur}"',
+                f'envelope format "{sskr_content_ur}"',
+                'echo ""',
             ],
         )
 
-        content_from_permit = register_path(DEMO_DIR / "content.from-permit.ur")
-        permit_commands = build_permit_commands()
-        permit_outputs = run_step(
-            shell,
-            "Decrypting content with Alice's permit",
-            permit_commands,
-            stop_on_success=True,
-        )
-        process_permit_output(permit_outputs, content_from_permit)
-
-        run_step(shell,
-            "Formatting permit-recovered content",
-            [
-                f'envelope format "$(cat {rel(content_from_permit)})"',
-            ],
-        )
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -623,49 +630,19 @@ PARTICIPANTS = (
 ENV = os.environ.copy()
 
 
-def process_inspection_output(output: str) -> None:
+def process_permits_output(output: str) -> list[str]:
+    return [line for line in output.splitlines() if line.startswith("ur:")]
+
+
+def process_sskr_output(output: str) -> str:
     ur_lines = [line for line in output.splitlines() if line.startswith("ur:")]
 
-    for permit in sorted(DEMO_DIR.glob("permit-*.ur")):
-        permit.unlink()
-
-    if len(ur_lines) <= 1:
-        return
-
-    for index, line in enumerate(ur_lines[1:], start=1):
-        # Persist each permit UR so the later decryption step can pull it from disk.
-        permit_path = register_path(DEMO_DIR / f"permit-{index}.ur")
-        permit_path.write_text(line + "\n")
-
-
-def process_sskr_output(output: str, target_path: Path) -> None:
-    ur_lines = [line for line in output.splitlines() if line.startswith("ur:")]
     if not ur_lines:
         raise RuntimeError("SSKR decryption did not produce a UR")
-    # Keep the recovered content UR to prove the SSKR path produces the edition payload.
-    register_path(target_path).write_text("\n".join(ur_lines) + "\n")
+    return ur_lines[0]
 
 
-def build_permit_commands() -> list[str]:
-    commands: list[str] = []
-    for permit in sorted(DEMO_DIR.glob("permit-*.ur")):
-        commands.append(
-            (
-                "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
-                f"content decrypt "
-                f"--edition \"$EDITION_UR\" "
-                f"--publisher \"$PUBLISHER_XID\" "
-                f"--permit \"@{rel(permit)}\" "
-                f"--identity \"$ALICE_PRVKEYS\" "
-                f"--emit-ur"
-            )
-        )
-    if not commands:
-        raise RuntimeError("No permit files available for decryption")
-    return commands
-
-
-def process_permit_output(outputs: list[str], target_path: Path) -> None:
+def process_permit_output(outputs: list[str]) -> str:
     if not outputs:
         raise RuntimeError("Permit decryption produced no output")
 
@@ -673,8 +650,8 @@ def process_permit_output(outputs: list[str], target_path: Path) -> None:
     ur_lines = [line for line in last_output.splitlines() if line.startswith("ur:")]
     if not ur_lines:
         raise RuntimeError("Permit decryption did not produce a UR")
-    # Keep the permit-based recovery output so we can diff it against the SSKR result.
-    register_path(target_path).write_text("\n".join(ur_lines) + "\n")
+    return ur_lines[0]
+
 
 if __name__ == "__main__":
     try:
