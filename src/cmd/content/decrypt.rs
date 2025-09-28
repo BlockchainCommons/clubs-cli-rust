@@ -1,14 +1,12 @@
 use anyhow::{Context, Result, anyhow, bail};
-use bc_components::{
-    DigestProvider, PrivateKeys, ReferenceProvider, SymmetricKey,
-};
+use bc_components::{PrivateKeys, SymmetricKey};
 use bc_envelope::prelude::Envelope;
 use bc_ur::UREncodable;
 use clap::Args;
 use clubs::edition::Edition;
 use dcbor::{CBORTaggedDecodable, prelude::CBOR};
 
-use crate::io::{self, RecipientDescriptor};
+use crate::io;
 
 /// Decrypt edition content using permits, SSKR shards, or raw keys.
 #[derive(Debug, Args)]
@@ -51,16 +49,13 @@ pub fn exec(args: CommandArgs) -> Result<()> {
     let verifier_keys = verifier_descriptor
         .as_ref()
         .map(|desc| desc.public_keys().clone());
-    let verifier_label =
-        verifier_descriptor.as_ref().and_then(descriptor_label);
 
-    let (inner_envelope, verified) = if let Some(ref keys) = verifier_keys {
-        let verified = edition_env
+    let inner_envelope = if let Some(ref keys) = verifier_keys {
+        edition_env
             .verify(keys)
-            .context("failed to verify edition signature")?;
-        (verified, true)
+            .context("failed to verify edition signature")?
     } else {
-        (edition_env.clone().try_unwrap()?, false)
+        edition_env.clone().try_unwrap()?
     };
 
     let edition = Edition::try_from(inner_envelope.clone())
@@ -84,13 +79,11 @@ pub fn exec(args: CommandArgs) -> Result<()> {
     let private_keys = parse_private_keys(&args.identities)?;
 
     let mut symmetric_key: Option<SymmetricKey> = None;
-    let mut key_source: Option<&'static str> = None;
 
     if let Some(key_spec) = args.key.as_ref() {
         let key = io::parse_symmetric_key(key_spec)
             .context("failed to parse symmetric key input")?;
         symmetric_key = Some(key);
-        key_source = Some("direct");
     }
 
     if !sealed_permits.is_empty() {
@@ -109,7 +102,6 @@ pub fn exec(args: CommandArgs) -> Result<()> {
             }
         } else {
             symmetric_key = Some(permit_key);
-            key_source = Some("permit");
         }
     }
 
@@ -165,29 +157,11 @@ pub fn exec(args: CommandArgs) -> Result<()> {
         }
     };
 
-    emit_summary(
-        &edition,
-        &content_envelope,
-        verified,
-        verifier_label.as_deref(),
-        key_source,
-        share_envelopes.len(),
-        symmetric_key.is_some(),
-    );
-
     if args.emit_ur {
         println!("{}", content_envelope.ur_string());
     }
 
     Ok(())
-}
-
-fn descriptor_label(descriptor: &RecipientDescriptor) -> Option<String> {
-    if let Some(xid) = descriptor.member_xid() {
-        Some(xid.to_string())
-    } else {
-        Some(descriptor.public_keys().reference().to_string())
-    }
 }
 
 fn parse_permits(
@@ -271,54 +245,4 @@ fn recover_key_from_permits(
             "none of the provided permits could be decrypted with the supplied identities"
         )
     })
-}
-
-fn emit_summary(
-    edition: &Edition,
-    content: &Envelope,
-    verified: bool,
-    verifier_label: Option<&str>,
-    key_source: Option<&'static str>,
-    sskr_count: usize,
-    key_available: bool,
-) {
-    let digest = content.digest().into_owned();
-    eprintln!("Content summary:");
-    eprintln!("  Club XID: {}", edition.club_xid);
-    eprintln!(
-        "  Provenance: seq {} ({})",
-        edition.provenance.seq(),
-        edition.provenance
-    );
-    eprintln!("  Content digest: {}", digest.short_description());
-
-    match (verified, verifier_label) {
-        (true, Some(label)) => eprintln!("  Signature: verified with {label}"),
-        (true, None) => eprintln!("  Signature: verified"),
-        (false, _) => {
-            eprintln!("  Signature: not verified (no verifier provided)");
-        }
-    }
-
-    if edition.content.is_encrypted() {
-        eprintln!("  Encryption: sealed (symmetric key per edition)");
-    } else if edition.content.is_wrapped() {
-        eprintln!("  Encryption: none (wrapped cleartext)");
-    } else {
-        eprintln!("  Encryption: none (cleartext)");
-    }
-
-    if sskr_count > 0 {
-        eprintln!("  Recovery inputs: SSKR shares ({sskr_count} provided)");
-    }
-    if let Some(source) = key_source {
-        let label = match source {
-            "direct" => "direct symmetric key",
-            "permit" => "public-key permit",
-            other => other,
-        };
-        eprintln!("  Recovery inputs: {label}");
-    } else if key_available {
-        eprintln!("  Recovery inputs: symmetric key");
-    }
 }

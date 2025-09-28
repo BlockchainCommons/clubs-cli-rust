@@ -534,61 +534,66 @@ def main() -> None:
         if not permit_urs:
             raise RuntimeError("No permit URs extracted from edition")
 
-        permit_commands = [
-            (
-                "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
-                f"content decrypt "
-                f"--edition \"$EDITION_UR\" "
-                f"--publisher \"$PUBLISHER_XID\" "
-                f"--permit \"{permit}\" "
-                f"--identity \"$ALICE_PRVKEYS\" "
-                f"--emit-ur | grep '^ur:' | head -n1"
-            )
-            for permit in permit_urs
-        ]
+        permit_list = " ".join(shlex.quote(permit) for permit in permit_urs)
 
-        permit_outputs = run_step(
+        permit_script = f"""
+typeset -g PERMIT_CONTENT_UR=""
+typeset -g LAST_PERMIT_ERROR=""
+for permit in {permit_list}; do
+  PERMIT_OUTPUT=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
+    content decrypt \\
+    --edition "$EDITION_UR" \\
+    --publisher "$PUBLISHER_XID" \\
+    --permit "$permit" \\
+    --identity "$ALICE_PRVKEYS" \\
+    --emit-ur 2>&1)
+  permit_status=$?
+  if (( permit_status == 0 )) && [[ -n "$PERMIT_OUTPUT" ]]; then
+    PERMIT_CONTENT_UR=$PERMIT_OUTPUT
+    break
+  fi
+  LAST_PERMIT_ERROR=$PERMIT_OUTPUT
+done
+if [[ -z "$PERMIT_CONTENT_UR" ]]; then
+  if [[ -n "$LAST_PERMIT_ERROR" ]]; then
+    print -u2 -- "$LAST_PERMIT_ERROR"
+  else
+    print -u2 -- "Permit decryption did not produce a UR"
+  fi
+  exit 1
+fi
+print -r -- "$PERMIT_CONTENT_UR"
+envelope format "$PERMIT_CONTENT_UR"
+echo ""
+"""
+
+        run_step(
             shell,
             "Decrypting content with Alice's permit",
-            permit_commands,
-            stop_on_success=True,
+            permit_script,
         )
 
-        permit_content_ur = process_permit_output(permit_outputs)
+        sskr_script = """
+SSKR_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \
+  content decrypt \
+  --edition "$EDITION_UR" \
+  --publisher "$PUBLISHER_XID" \
+  --sskr "${SSKR_URS[1]}" \
+  --sskr "${SSKR_URS[2]}" \
+  --emit-ur)
+if [[ -z "$SSKR_CONTENT_UR" ]]; then
+  print -u2 -- "SSKR decryption did not produce a UR"
+  exit 1
+fi
+print -r -- "$SSKR_CONTENT_UR"
+envelope format "$SSKR_CONTENT_UR"
+echo ""
+"""
 
-        run_step(shell,
-            "Decrypting content with Alice's permit",
-            [
-                f'print -r -- "{permit_content_ur}"',
-                f'envelope format "{permit_content_ur}"',
-                'echo ""',
-            ],
-        )
-
-        sskr_output = run_step(
+        run_step(
             shell,
             "Decrypting content via SSKR shares",
-            [
-                (
-                    "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
-                    "content decrypt "
-                    "--edition \"$EDITION_UR\" "
-                    "--publisher \"$PUBLISHER_XID\" "
-                    "--sskr \"${SSKR_URS[1]}\" "
-                    "--sskr \"${SSKR_URS[2]}\" "
-                    "--emit-ur | grep '^ur:' | head -n1"
-                ),
-            ],
-        )
-        sskr_content_ur = process_sskr_output(sskr_output[-1] if sskr_output else "")
-
-        run_step(shell,
-            "Decrypting content via SSKR shares",
-            [
-                f'print -r -- "{sskr_content_ur}"',
-                f'envelope format "{sskr_content_ur}"',
-                'echo ""',
-            ],
+            sskr_script,
         )
 
 
@@ -632,25 +637,6 @@ ENV = os.environ.copy()
 
 def process_permits_output(output: str) -> list[str]:
     return [line for line in output.splitlines() if line.startswith("ur:")]
-
-
-def process_sskr_output(output: str) -> str:
-    ur_lines = [line for line in output.splitlines() if line.startswith("ur:")]
-
-    if not ur_lines:
-        raise RuntimeError("SSKR decryption did not produce a UR")
-    return ur_lines[0]
-
-
-def process_permit_output(outputs: list[str]) -> str:
-    if not outputs:
-        raise RuntimeError("Permit decryption produced no output")
-
-    last_output = outputs[-1]
-    ur_lines = [line for line in last_output.splitlines() if line.startswith("ur:")]
-    if not ur_lines:
-        raise RuntimeError("Permit decryption did not produce a UR")
-    return ur_lines[0]
 
 
 if __name__ == "__main__":
