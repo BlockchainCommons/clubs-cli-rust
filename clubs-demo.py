@@ -518,28 +518,38 @@ def main() -> None:
             ],
         )
 
-        permits_output = run_step(
+        run_step(
             shell,
             "Extracting permit URs",
-            [
-                (
-                    "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
-                    f"edition permits "
-                    f"--edition \"$EDITION_UR\""
-                ),
-            ],
+            "\n".join([
+                "PERMIT_RAW=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\",
+                "  edition permits \\",
+                "  --edition \"$EDITION_UR\")",
+                'if [[ -z "$PERMIT_RAW" ]]; then',
+                '  print -u2 -- "No permit URs extracted from edition"',
+                '  exit 1',
+                'fi',
+                'print -r -- "$PERMIT_RAW"',
+            ]),
         )
-        permit_urs = process_permits_output(permits_output[-1] if permits_output else "")
 
-        if not permit_urs:
-            raise RuntimeError("No permit URs extracted from edition")
+        run_step(
+            shell,
+            "Saving permit URs",
+            "\n".join([
+                "typeset -ga PERMIT_URS=(\"${(@f)${PERMIT_RAW%$'\\n'}}\")",
+                'if (( ${#PERMIT_URS[@]} == 0 )); then',
+                '  print -u2 -- "No permit URs extracted from edition"',
+                '  exit 1',
+                'fi',
+                'print -r -l -- "${PERMIT_URS[@]}"',
+            ]),
+        )
 
-        permit_list = " ".join(shlex.quote(permit) for permit in permit_urs)
-
-        permit_script = f"""
+        permit_script = """
 typeset -g PERMIT_CONTENT_UR=""
 typeset -g LAST_PERMIT_ERROR=""
-for permit in {permit_list}; do
+for permit in "${PERMIT_URS[@]}"; do
   PERMIT_OUTPUT=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
     content decrypt \\
     --edition "$EDITION_UR" \\
@@ -549,7 +559,7 @@ for permit in {permit_list}; do
     --emit-ur 2>&1)
   permit_status=$?
   if (( permit_status == 0 )) && [[ -n "$PERMIT_OUTPUT" ]]; then
-    PERMIT_CONTENT_UR=$PERMIT_OUTPUT
+    PERMIT_CONTENT_UR=${PERMIT_OUTPUT%%$'\n'*}
     break
   fi
   LAST_PERMIT_ERROR=$PERMIT_OUTPUT
@@ -633,10 +643,6 @@ PARTICIPANTS = (
 )
 
 ENV = os.environ.copy()
-
-
-def process_permits_output(output: str) -> list[str]:
-    return [line for line in output.splitlines() if line.startswith("ur:")]
 
 
 if __name__ == "__main__":
