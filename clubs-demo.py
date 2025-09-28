@@ -522,56 +522,22 @@ def main() -> None:
             shell,
             "Extracting permit URs",
             "\n".join([
-                "PERMIT_RAW=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\",
+                "typeset -ga PERMIT_URS=(\"${(@f)$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\",
                 "  edition permits \\",
-                "  --edition \"$EDITION_UR\")",
-                'if [[ -z "$PERMIT_RAW" ]]; then',
-                '  print -u2 -- "No permit URs extracted from edition"',
-                '  exit 1',
-                'fi',
-                'print -r -- "$PERMIT_RAW"',
-            ]),
-        )
-
-        run_step(
-            shell,
-            "Saving permit URs",
-            "\n".join([
-                "typeset -ga PERMIT_URS=(\"${(@f)${PERMIT_RAW%$'\\n'}}\")",
-                'if (( ${#PERMIT_URS[@]} == 0 )); then',
-                '  print -u2 -- "No permit URs extracted from edition"',
-                '  exit 1',
-                'fi',
+                "  --edition \"$EDITION_UR\")%$'\\n'}}\")",
                 'print -r -l -- "${PERMIT_URS[@]}"',
             ]),
         )
 
         permit_script = """
-typeset -g PERMIT_CONTENT_UR=""
-typeset -g LAST_PERMIT_ERROR=""
-for permit in "${PERMIT_URS[@]}"; do
-  PERMIT_OUTPUT=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
-    content decrypt \\
-    --edition "$EDITION_UR" \\
-    --publisher "$PUBLISHER_XID" \\
-    --permit "$permit" \\
-    --identity "$ALICE_PRVKEYS" \\
-    --emit-ur 2>&1)
-  permit_status=$?
-  if (( permit_status == 0 )) && [[ -n "$PERMIT_OUTPUT" ]]; then
-    PERMIT_CONTENT_UR=${PERMIT_OUTPUT%%$'\n'*}
-    break
-  fi
-  LAST_PERMIT_ERROR=$PERMIT_OUTPUT
-done
-if [[ -z "$PERMIT_CONTENT_UR" ]]; then
-  if [[ -n "$LAST_PERMIT_ERROR" ]]; then
-    print -u2 -- "$LAST_PERMIT_ERROR"
-  else
-    print -u2 -- "Permit decryption did not produce a UR"
-  fi
-  exit 1
-fi
+PERMIT_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \
+  content decrypt \
+  --edition "$EDITION_UR" \
+  --publisher "$PUBLISHER_XID" \
+  --permit "${PERMIT_URS[1]}" \
+  --identity "$ALICE_PRVKEYS" \
+  --emit-ur)
+PERMIT_CONTENT_UR=${PERMIT_CONTENT_UR%%$'\n'*}
 print -r -- "$PERMIT_CONTENT_UR"
 envelope format "$PERMIT_CONTENT_UR"
 echo ""
@@ -591,13 +557,9 @@ SSKR_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -
   --sskr "${SSKR_URS[1]}" \
   --sskr "${SSKR_URS[2]}" \
   --emit-ur)
-if [[ -z "$SSKR_CONTENT_UR" ]]; then
-  print -u2 -- "SSKR decryption did not produce a UR"
-  exit 1
-fi
-print -r -- "$SSKR_CONTENT_UR"
+SSKR_CONTENT_UR=${SSKR_CONTENT_UR%%$'\n'*}
+echo "$SSKR_CONTENT_UR"
 envelope format "$SSKR_CONTENT_UR"
-echo ""
 """
 
         run_step(
