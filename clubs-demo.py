@@ -411,13 +411,13 @@ def main() -> None:
                 f"Creating XID document for {upper}",
                 [
                     f'{upper}_SEED=$(seedtool --deterministic={seed_tag} --out seed)',
-                    f'echo "${upper}_SEED=${{{upper}_SEED}}"',
+                    f'echo "{upper}_SEED=${upper}_SEED"',
                     f'{upper}_PRVKEYS=$(envelope generate prvkeys --seed "${upper}_SEED")',
-                    f'echo "${upper}_PRVKEYS=${{{upper}_PRVKEYS}}"',
+                    f'echo "{upper}_PRVKEYS=${upper}_PRVKEYS"',
                     f'{upper}_PUBKEYS=$(envelope generate pubkeys "${upper}_PRVKEYS")',
-                    f'echo "${upper}_PUBKEYS=${{{upper}_PUBKEYS}}"',
+                    f'echo "{upper}_PUBKEYS=${upper}_PUBKEYS"',
                     f'{upper}_XID=$(envelope xid new "${upper}_PRVKEYS")',
-                    f'echo "${upper}_XID=${{{upper}_XID}}"',
+                    f'echo "{upper}_XID=${upper}_XID"',
                     # Show the formatted output
                     f'envelope format "${upper}_XID"',
                 ],
@@ -427,7 +427,11 @@ def main() -> None:
             "Assembling edition content envelope",
             [
                 'CONTENT_SUBJECT=$(envelope subject type string "Welcome to the Gordian Club!")',
+                'envelope format "$CONTENT_SUBJECT"',
+                'echo ""', '#',
                 'CONTENT_CLEAR=$(echo "$CONTENT_SUBJECT" | envelope assertion add pred-obj string "title" string "Genesis Edition")',
+                'envelope format "$CONTENT_CLEAR"',
+                'echo ""', '#',
                 'CONTENT_WRAPPED=$(envelope subject type wrapped "$CONTENT_CLEAR")',
                 'envelope format "$CONTENT_WRAPPED"',
             ],
@@ -435,7 +439,10 @@ def main() -> None:
 
         run_step(shell,
             "Deriving deterministic provenance seed",
-            "PROVENANCE_SEED=$(seedtool --deterministic=PROVENANCE-DEMO --count 32 --out seed)",
+            [
+                "PROVENANCE_SEED=$(seedtool --deterministic=PROVENANCE-DEMO --count 32 --out seed)",
+                "echo $PROVENANCE_SEED"
+            ],
         )
 
         register_path(PROV_DIR / "generator.json")
@@ -445,10 +452,9 @@ def main() -> None:
         run_step(shell,
             "Starting provenance mark chain",
             [
-                f'provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition"',
-                f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown',
-                f'GENESIS_MARK=$(provenance print {rel(PROV_DIR)} --start 0 --end 0 --format ur)',
+                f'GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur)',
                 f'echo "$GENESIS_MARK"',  # Show the UR we captured
+                f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown',
             ],
         )
 
