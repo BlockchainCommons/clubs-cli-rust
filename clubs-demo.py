@@ -21,11 +21,12 @@ BOX_PREFIX = "│ "
 
 class PersistentShell:
     """
-    Persistent Bash shell that preserves state across commands and returns
+    Persistent POSIX shell that preserves state across commands and returns
     combined stdout+stderr with accurate exit codes.
     """
 
     _CTRL_FD = 9
+    _DEBUG_FD = 5
     _RS = b"\x1e"  # ASCII Record Separator to minimize collision in user output
 
     def __init__(
@@ -33,7 +34,7 @@ class PersistentShell:
         cwd: Optional[str] = None,
         env: Optional[dict] = None,
         *,
-        bash_path: str = "bash",
+        shell_path: str | None = None,
         login: bool = True,
         encoding: Optional[str] = None,
         read_chunk: int = 65536,
@@ -53,30 +54,45 @@ class PersistentShell:
         self._ctrl_r = ctrl_r
         self._ctrl_w = ctrl_w
 
+        # Resolve which shell to execute
+        self._shell_path = (
+            shell_path
+            or os.environ.get("CLUBS_DEMO_SHELL")
+            or os.environ.get("SHELL")
+            or "zsh"
+        )
+
         # Build the bootstrap script
+        debug_fd = self._DEBUG_FD
         bootstrap = f"""\
-# PersistentShell bootstrap (executed via: bash -lc '<this script>')
+# PersistentShell bootstrap (executed via: $SHELL -lc '<this script>')
 # stdin is already /dev/null from the parent; do not touch FD 0 here.
 
-# ── Debug channel on FD 200 (default: silent) ──────────────────────────────────
+# ── Debug channel on FD {debug_fd} (default: silent) ───────────────────────────
 if [[ -n "${{PSH_DEBUG_FILE:-}}" ]]; then
-  exec 200>>"${{PSH_DEBUG_FILE}}" || {{ echo "PSH: cannot open ${{PSH_DEBUG_FILE}}" >&2; exit 95; }}
+  exec {debug_fd}>>"${{PSH_DEBUG_FILE}}" || {{ echo "PSH: cannot open ${{PSH_DEBUG_FILE}}" >&2; exit 95; }}
 elif [[ -n "${{PSH_DEBUG:-}}" ]]; then
-  exec 200>/dev/stderr
+  exec {debug_fd}>/dev/stderr
 else
-  exec 200>/dev/null
+  exec {debug_fd}>/dev/null
 fi
 
 # ── Control FD: duplicate the inherited FD to 9 and close the original ─────────
 exec 9<&{ctrl_r} || {{ echo "PSH: dup {ctrl_r} -> 9 failed" >&200; exit 97; }}
 exec {ctrl_r}<&- || true
 
-# Sanitize prompts/hooks; keep normal bash semantics (no `set -e`)
+# Sanitize prompts/hooks; keep normal shell semantics (no `set -e`)
 PS1=; PS2=; PROMPT_COMMAND=
 
-# Optional xtrace to FD 200
+# If running under zsh, adopt reasonable defaults so scripts behave like POSIX sh
+if [[ -n "${{ZSH_VERSION:-}}" ]]; then
+  setopt SH_WORD_SPLIT
+  unsetopt NOMATCH
+fi
+
+# Optional xtrace routed via FD 200
 if [[ -n "${{PSH_DEBUG:-}}" ]]; then
-  export BASH_XTRACEFD=200
+  exec 2>&{debug_fd}
   set -x
 fi
 
@@ -104,8 +120,8 @@ done
 exit 0
 """
 
-        # Compose bash argv
-        argv = [bash_path]
+# Compose shell argv
+        argv = [self._shell_path]
         if login:
             argv.append("-l")
         argv += ["-c", bootstrap]
@@ -374,10 +390,18 @@ def sanitize_command(command: str) -> str:
 def main() -> None:
     # Create persistent shell instance for efficient execution
     with PersistentShell(cwd=str(SCRIPT_DIR), env=ENV, debug=False) as shell:
+        run_step(shell,
+            "Set zsh options",
+            [
+                "setopt nobanghist", # zsh: don't record ! in history
+            ]
+        )
 
         run_step(shell,
             "Checking prerequisites",
-            "for cmd in seedtool envelope provenance cargo; do command -v \"$cmd\"; done",
+            [
+                "for cmd in seedtool envelope provenance cargo; do command -v \"$cmd\"; done"
+            ]
         )
 
         run_step(shell,
