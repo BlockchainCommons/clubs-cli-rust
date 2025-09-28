@@ -476,7 +476,7 @@ def main() -> None:
         run_step(shell,
             "Starting provenance mark chain",
             [
-                f'GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur)',
+                f'GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur --quiet)',
                 f'echo "$GENESIS_MARK"',  # Show the UR we captured
                 f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown',
             ],
