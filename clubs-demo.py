@@ -554,12 +554,12 @@ done
         )
 
         sskr_script = """
-SSKR_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \
-  content decrypt \
-  --edition "$EDITION_UR" \
-  --publisher "$PUBLISHER_XID" \
-  --sskr "${SSKR_URS[1]}" \
-  --sskr "${SSKR_URS[2]}" \
+SSKR_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
+  content decrypt \\
+  --edition "$EDITION_UR" \\
+  --publisher "$PUBLISHER_XID" \\
+  --sskr "${SSKR_URS[1]}" \\
+  --sskr "${SSKR_URS[2]}" \\
   --emit-ur)
 SSKR_CONTENT_UR=${SSKR_CONTENT_UR%%$'\n'*}
 echo "$SSKR_CONTENT_UR"
