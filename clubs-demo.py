@@ -530,17 +530,21 @@ def main() -> None:
         )
 
         permit_script = """
-PERMIT_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \
-  content decrypt \
-  --edition "$EDITION_UR" \
-  --publisher "$PUBLISHER_XID" \
-  --permit "${PERMIT_URS[1]}" \
-  --identity "$ALICE_PRVKEYS" \
-  --emit-ur)
-PERMIT_CONTENT_UR=${PERMIT_CONTENT_UR%%$'\n'*}
-print -r -- "$PERMIT_CONTENT_UR"
-envelope format "$PERMIT_CONTENT_UR"
-echo ""
+typeset -g PERMIT_CONTENT_UR=""
+for permit in "${PERMIT_URS[@]}"; do
+  if PERMIT_OUTPUT=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
+    content decrypt \\
+    --edition "$EDITION_UR" \\
+    --publisher "$PUBLISHER_XID" \\
+    --permit "$permit" \\
+    --identity "$ALICE_PRVKEYS" \\
+    --emit-ur); then
+    PERMIT_CONTENT_UR=${PERMIT_OUTPUT%%$'\n'*}
+    echo "$PERMIT_CONTENT_UR"
+    envelope format "$PERMIT_CONTENT_UR"
+    break
+  fi
+done
 """
 
         run_step(
