@@ -482,26 +482,49 @@ def main() -> None:
             ],
         )
 
-        edition_file = register_path(DEMO_DIR / "edition.ur")
         sskr_shares = [
             register_path(DEMO_DIR / "sskr-share-g1-1.ur"),
             register_path(DEMO_DIR / "sskr-share-g1-2.ur"),
             register_path(DEMO_DIR / "sskr-share-g1-3.ur"),
         ]
+        sskr_share_words = ' '.join(qp(path) for path in sskr_shares)
 
         run_step(shell,
             "Composing genesis edition",
-            f"""
-            RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \
-              --publisher "$PUBLISHER_XID" \
-              --content "$CONTENT_WRAPPED" \
-              --provenance "$GENESIS_MARK" \
-              --permit "$ALICE_XID" \
-              --permit "$BOB_PUBKEYS" \
-              --sskr 2of3 \
-              --summary \
-              --out-dir {qp(DEMO_DIR)}
-            """,
+            "\n".join([
+                "EDITION_RAW=$(RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \\",
+                "  --publisher \"$PUBLISHER_XID\" \\",
+                "  --content \"$CONTENT_WRAPPED\" \\",
+                "  --provenance \"$GENESIS_MARK\" \\",
+                "  --permit \"$ALICE_XID\" \\",
+                "  --permit \"$BOB_PUBKEYS\" \\",
+                "  --sskr 2of3)",
+                'print -r -- "$EDITION_RAW"',
+            ]),
+        )
+
+        run_step(shell,
+            "Capturing edition artifacts",
+            "\n".join([
+                "typeset -ga EDITION_URS=(\"${(@f)${EDITION_RAW%$'\\n'}}\")",
+                "EDITION_UR=${EDITION_URS[1]}",
+                "typeset -ga SSKR_URS=(\"${EDITION_URS[@]:1}\")",
+                f"typeset -ga SSKR_SHARE_PATHS=({sskr_share_words})",
+                "typeset -i idx=1",
+                "for share in ${SSKR_URS[@]}; do",
+                "  share_path=${SSKR_SHARE_PATHS[idx]}",
+                "  print -r -- \"$share\" > \"$share_path\"",
+                "  (( idx++ ))",
+                "done",
+                'print -rl -- "${EDITION_URS[@]}"',
+            ]),
+        )
+
+        run_step(shell,
+            "Formatting captured edition URs",
+            [
+                'for ur in "${EDITION_URS[@]}"; do envelope format "$ur"; echo ""; done',
+            ],
         )
 
         inspect_output = run_step(
@@ -511,7 +534,7 @@ def main() -> None:
                 (
                     "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
                     f"edition inspect "
-                    f"--edition \"@{rel(edition_file)}\" "
+                    f"--edition \"$EDITION_UR\" "
                     f"--publisher \"$PUBLISHER_XID\" "
                     f"--summary "
                     f"--emit-permits"
@@ -527,7 +550,7 @@ def main() -> None:
                 (
                     "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
                     f"content decrypt "
-                    f"--edition \"@{rel(edition_file)}\" "
+                    f"--edition \"$EDITION_UR\" "
                     f"--publisher \"$PUBLISHER_XID\" "
                     f"--sskr \"@{rel(sskr_shares[0])}\" "
                     f"--sskr \"@{rel(sskr_shares[1])}\" "
@@ -546,7 +569,7 @@ def main() -> None:
         )
 
         content_from_permit = register_path(DEMO_DIR / "content.from-permit.ur")
-        permit_commands = build_permit_commands(edition_file)
+        permit_commands = build_permit_commands()
         permit_outputs = run_step(
             shell,
             "Decrypting content with Alice's permit",
@@ -623,14 +646,14 @@ def process_sskr_output(output: str, target_path: Path) -> None:
     register_path(target_path).write_text("\n".join(ur_lines) + "\n")
 
 
-def build_permit_commands(edition_file: Path) -> list[str]:
+def build_permit_commands() -> list[str]:
     commands: list[str] = []
     for permit in sorted(DEMO_DIR.glob("permit-*.ur")):
         commands.append(
             (
                 "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
                 f"content decrypt "
-                f"--edition \"@{rel(edition_file)}\" "
+                f"--edition \"$EDITION_UR\" "
                 f"--publisher \"$PUBLISHER_XID\" "
                 f"--permit \"@{rel(permit)}\" "
                 f"--identity \"$ALICE_PRVKEYS\" "

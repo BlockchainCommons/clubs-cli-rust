@@ -1,5 +1,3 @@
-use std::{fs, path::PathBuf};
-
 use anyhow::{Context, Result, anyhow, bail};
 use bc_components::{
     PrivateKeys, ReferenceProvider, SSKRGroupSpec, SSKRSpec, XIDProvider,
@@ -35,12 +33,6 @@ pub struct CommandArgs {
     /// Previous edition UR to enforce provenance ordering.
     #[arg(long, value_name = "UR")]
     pub previous: Option<String>,
-    /// Output directory for generated artifacts.
-    #[arg(long, value_name = "PATH")]
-    pub out_dir: Option<PathBuf>,
-    /// Print a human-readable summary in addition to UR outputs.
-    #[arg(long)]
-    pub summary: bool,
 }
 
 pub fn exec(args: CommandArgs) -> Result<()> {
@@ -51,8 +43,6 @@ pub fn exec(args: CommandArgs) -> Result<()> {
         permits,
         sskr,
         previous,
-        out_dir,
-        summary,
     } = args;
 
     let publisher_doc = io::parse_xid_document(&publisher)
@@ -70,7 +60,6 @@ pub fn exec(args: CommandArgs) -> Result<()> {
     let provenance_mark = io::parse_provenance_mark(&provenance)
         .context("failed to parse provenance mark")?;
 
-    let mut previous_details: Option<Edition> = None;
     if let Some(previous_str) = previous.as_ref() {
         let previous_env = io::parse_envelope(previous_str)
             .context("failed to parse previous edition")?;
@@ -81,23 +70,19 @@ pub fn exec(args: CommandArgs) -> Result<()> {
                 "provided provenance mark does not follow the previous edition's provenance mark"
             );
         }
-        previous_details = Some(previous_edition);
     }
 
-    let mut permits_summary: Vec<String> = Vec::new();
     let mut recipient_permits: Vec<PublicKeyPermit> = Vec::new();
     for permit_input in permits.iter() {
         let descriptor = io::parse_recipient_descriptor(permit_input)
             .with_context(|| {
                 format!("failed to parse permit input '{permit_input}'")
             })?;
-        let (permit, label) = permit_from_descriptor(descriptor);
-        permits_summary.push(label);
+        let (permit, _label) = permit_from_descriptor(descriptor);
         recipient_permits.push(permit);
     }
 
-    let sskr_inputs = sskr.clone();
-    let sskr_spec = parse_sskr_spec(&sskr_inputs)?;
+    let sskr_spec = parse_sskr_spec(&sskr)?;
 
     let edition = Edition::new(club_xid, provenance_mark.clone(), content_env)
         .context("content envelope must not contain assertions")?;
@@ -108,71 +93,13 @@ pub fn exec(args: CommandArgs) -> Result<()> {
     let edition_ur = signed_edition.ur_string();
     println!("{}", edition_ur);
 
-    let mut share_records: Vec<(usize, usize, String)> = Vec::new();
     if let Some(groups) = share_groups {
-        for (group_idx, group) in groups.into_iter().enumerate() {
-            for (share_idx, share) in group.into_iter().enumerate() {
+        for group in groups {
+            for share in group {
                 let ur = share.ur_string();
                 println!("{}", ur);
-                share_records.push((group_idx + 1, share_idx + 1, ur));
             }
         }
-    }
-
-    if let Some(dir) = out_dir.as_ref() {
-        fs::create_dir_all(dir).with_context(|| {
-            format!("failed to create output directory '{}'", dir.display())
-        })?;
-        let edition_path = dir.join("edition.ur");
-        fs::write(&edition_path, format!("{}\n", edition_ur)).with_context(
-            || format!("failed to write {}", edition_path.display()),
-        )?;
-        for (group_idx, share_idx, ur) in &share_records {
-            let path =
-                dir.join(format!("sskr-share-g{}-{}.ur", group_idx, share_idx));
-            fs::write(&path, format!("{}\n", ur)).with_context(|| {
-                format!("failed to write {}", path.display())
-            })?;
-        }
-    }
-
-    if summary {
-        eprintln!("Edition composed:");
-        eprintln!("  Publisher XID: {}", club_xid);
-        eprintln!(
-            "  Provenance: seq {} ({})",
-            provenance_mark.seq(),
-            provenance_mark
-        );
-        if let Some(prev) = previous_details.as_ref() {
-            eprintln!(
-                "  Previous: seq {} ({})",
-                prev.provenance_mark().seq(),
-                prev.provenance_mark()
-            );
-        } else if provenance_mark.is_genesis() {
-            eprintln!("  Provenance mark is genesis");
-        }
-        if !permits_summary.is_empty() {
-            eprintln!("  Recipients ({}):", permits_summary.len());
-            for label in &permits_summary {
-                eprintln!("    - {}", label);
-            }
-        } else {
-            eprintln!("  Recipients: none (content will remain in cleartext)");
-        }
-        if let Some(spec_strings) = if sskr_inputs.is_empty() {
-            None
-        } else {
-            Some(sskr_inputs.join(", "))
-        } {
-            eprintln!("  SSKR spec: {}", spec_strings);
-            eprintln!("  SSKR shares emitted: {}", share_records.len());
-        }
-        if let Some(dir) = out_dir.as_ref() {
-            eprintln!("  Artifacts written to {}", dir.display());
-        }
-        eprintln!("  Edition UR emitted on stdout (first line)");
     }
 
     Ok(())

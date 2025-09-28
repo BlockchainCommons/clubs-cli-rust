@@ -236,7 +236,8 @@ fn recover_key_from_permits(
                     let cbor = match CBOR::try_from_data(&data) {
                         Ok(value) => value,
                         Err(err) => {
-                            let preview = hex::encode(&data[..data.len().min(32)]);
+                            let preview =
+                                hex::encode(&data[..data.len().min(32)]);
                             return Err(anyhow!(
                                 "permit decrypted to invalid CBOR data: {err}; preview={preview}"
                             ));
