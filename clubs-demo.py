@@ -390,155 +390,135 @@ def sanitize_command(command: str) -> str:
 def main() -> None:
     # Create persistent shell instance for efficient execution
     with PersistentShell(cwd=str(SCRIPT_DIR), env=ENV, debug=False) as shell:
-        run_step(shell,
-            "Set zsh options",
-            [
-                "setopt nobanghist", # zsh: don't record ! in history
-            ]
-        )
+        script = """
+setopt nobanghist
+"""
+        run_step(shell, "Set zsh options", script)
 
-        run_step(shell,
-            "Checking prerequisites",
-            [
-                "for cmd in seedtool envelope provenance cargo; do command -v \"$cmd\"; done"
-            ]
-        )
+        script = """
+for cmd in seedtool envelope provenance cargo; do command -v "$cmd"; done
+"""
+        run_step(shell, "Checking prerequisites", script)
 
-        run_step(shell,
-            "Preparing demo workspace",
-            f"rm -rf {qp(DEMO_DIR)} && mkdir -p {qp(DEMO_DIR)}",
-        )
+        script = f"""
+rm -rf {qp(DEMO_DIR)} && mkdir -p {qp(DEMO_DIR)}
+"""
+        run_step(shell, "Preparing demo workspace", script)
 
-        run_step(shell,
-            "Generating deterministic publisher seed",
-            [
-                "PUBLISHER_SEED=$(seedtool --deterministic=CLUBS-DEMO --out seed)",
-                "echo $PUBLISHER_SEED"
-            ],
-        )
+        script = """
+PUBLISHER_SEED=$(seedtool --deterministic=CLUBS-DEMO --out seed)
+echo $PUBLISHER_SEED
+"""
+        run_step(shell, "Generating deterministic publisher seed", script)
 
-        run_step(shell,
-            "Deriving publisher signing material",
-            [
-                'PUBLISHER_PRVKEYS=$(envelope generate prvkeys --seed "$PUBLISHER_SEED")',
-                'echo $PUBLISHER_PRVKEYS',
-                'PUBLISHER_XID=$(envelope xid new "$PUBLISHER_PRVKEYS")',
-                'echo $PUBLISHER_XID',
-                'envelope format "$PUBLISHER_XID"',  # Show the formatted output
-            ],
-        )
+        script = """
+PUBLISHER_PRVKEYS=$(envelope generate prvkeys --seed "$PUBLISHER_SEED")
+echo $PUBLISHER_PRVKEYS
+PUBLISHER_XID=$(envelope xid new "$PUBLISHER_PRVKEYS")
+echo $PUBLISHER_XID
+envelope format "$PUBLISHER_XID"
+"""
+        run_step(shell, "Deriving publisher signing material", script)
 
         for name, seed_tag in PARTICIPANTS:
             upper = name.upper()
-            run_step(
-                shell,
-                f"Creating XID document for {upper}",
-                [
-                    f'{upper}_SEED=$(seedtool --deterministic={seed_tag} --out seed)',
-                    f'echo "{upper}_SEED=${upper}_SEED"',
-                    f'{upper}_PRVKEYS=$(envelope generate prvkeys --seed "${upper}_SEED")',
-                    f'echo "{upper}_PRVKEYS=${upper}_PRVKEYS"',
-                    f'{upper}_PUBKEYS=$(envelope generate pubkeys "${upper}_PRVKEYS")',
-                    f'echo "{upper}_PUBKEYS=${upper}_PUBKEYS"',
-                    f'{upper}_XID=$(envelope xid new "${upper}_PRVKEYS")',
-                    f'echo "{upper}_XID=${upper}_XID"',
-                    # Show the formatted output
-                    f'envelope format "${upper}_XID"',
-                ],
-            )
+            script = f"""
+{upper}_SEED=$(seedtool --deterministic={seed_tag} --out seed)
+echo "{upper}_SEED=${upper}_SEED"
+{upper}_PRVKEYS=$(envelope generate prvkeys --seed "${upper}_SEED")
+echo "{upper}_PRVKEYS=${upper}_PRVKEYS"
+{upper}_PUBKEYS=$(envelope generate pubkeys "${upper}_PRVKEYS")
+echo "{upper}_PUBKEYS=${upper}_PUBKEYS"
+{upper}_XID=$(envelope xid new "${upper}_PRVKEYS")
+echo "{upper}_XID=${upper}_XID"
+envelope format "${upper}_XID"
+"""
+            run_step(shell, f"Creating XID document for {upper}", script)
 
-        run_step(shell,
-            "Assembling edition content envelope",
-            [
-                'CONTENT_SUBJECT=$(envelope subject type string "Welcome to the Gordian Club!")',
-                'envelope format "$CONTENT_SUBJECT"',
-                'echo ""', '#',
-                'CONTENT_CLEAR=$(echo "$CONTENT_SUBJECT" | envelope assertion add pred-obj string "title" string "Genesis Edition")',
-                'envelope format "$CONTENT_CLEAR"',
-                'echo ""', '#',
-                'CONTENT_WRAPPED=$(envelope subject type wrapped "$CONTENT_CLEAR")',
-                'envelope format "$CONTENT_WRAPPED"',
-            ],
-        )
+        script = """
+CONTENT_SUBJECT=$(envelope subject type string "Welcome to the Gordian Club!")
+echo "$CONTENT_SUBJECT"
+envelope format "$CONTENT_SUBJECT"
+echo ""
+CONTENT_CLEAR=$(echo "$CONTENT_SUBJECT" | envelope assertion add pred-obj string "title" string "Genesis Edition")
+echo "$CONTENT_CLEAR"
+envelope format "$CONTENT_CLEAR"
+echo ""
+CONTENT_WRAPPED=$(envelope subject type wrapped "$CONTENT_CLEAR")
+echo "$CONTENT_WRAPPED"
+envelope format "$CONTENT_WRAPPED"
+"""
+        run_step(shell, "Assembling edition content envelope", script)
 
-        run_step(shell,
-            "Deriving deterministic provenance seed",
-            [
-                "PROVENANCE_SEED=$(seedtool --deterministic=PROVENANCE-DEMO --count 32 --out seed)",
-                "echo $PROVENANCE_SEED"
-            ],
-        )
+        script = """
+PROVENANCE_SEED=$(seedtool --deterministic=PROVENANCE-DEMO --count 32 --out seed)
+echo $PROVENANCE_SEED
+"""
+        run_step(shell, "Deriving deterministic provenance seed", script)
 
         register_path(PROV_DIR / "generator.json")
         register_path(PROV_DIR / "marks")
         register_path(PROV_DIR / "marks/mark-0.json")
 
-        run_step(shell,
-            "Starting provenance mark chain",
-            [
-                f'GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur --quiet)',
-                f'echo "$GENESIS_MARK"',  # Show the UR we captured
-                f'provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown',
-            ],
-        )
+        script = f"""
+GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur --quiet)
+echo "$GENESIS_MARK"
+provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown
+"""
+        run_step(shell, "Starting provenance mark chain", script)
 
-        run_step(shell,
-            "Composing genesis edition",
-            "\n".join([
-                "EDITION_RAW=$(RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \\",
-                "  --publisher \"$PUBLISHER_XID\" \\",
-                "  --content \"$CONTENT_WRAPPED\" \\",
-                "  --provenance \"$GENESIS_MARK\" \\",
-                "  --permit \"$ALICE_XID\" \\",
-                "  --permit \"$BOB_PUBKEYS\" \\",
-                "  --sskr 2of3)",
-                'print -r -- "$EDITION_RAW"',
-            ]),
-        )
+        script = """
+EDITION_RAW=$(RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- init \\
+  --publisher "$PUBLISHER_XID" \\
+  --content "$CONTENT_WRAPPED" \\
+  --provenance "$GENESIS_MARK" \\
+  --permit "$ALICE_XID" \\
+  --permit "$BOB_PUBKEYS" \\
+  --sskr 2of3)
+print -r -- "$EDITION_RAW"
+"""
 
-        run_step(shell,
-            "Capturing edition artifacts",
-            "\n".join([
-                "typeset -ga EDITION_URS=(\"${(@f)${EDITION_RAW%$'\\n'}}\")",
-                "EDITION_UR=${EDITION_URS[1]}",
-                "typeset -ga SSKR_URS=(\"${EDITION_URS[@]:1}\")",
-                'for ur in "${EDITION_URS[@]}"; do print -r -- "$ur"; envelope format "$ur"; echo ""; done',
-            ]),
-        )
 
-        run_step(shell,
-            "Verifying composed edition",
-            [
-                (
-                    "RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- "
-                    f"edition verify "
-                    f"--edition \"$EDITION_UR\" "
-                    f"--publisher \"$PUBLISHER_XID\""
-                ),
-            ],
-        )
+        run_step(shell, "Composing genesis edition", script)
 
-        run_step(
-            shell,
-            "Extracting permit URs",
-            "\n".join([
-                "typeset -ga PERMIT_URS=(\"${(@f)$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\",
-                "  edition permits \\",
-                "  --edition \"$EDITION_UR\")%$'\\n'}}\")",
-                'print -r -l -- "${PERMIT_URS[@]}"',
-            ]),
-        )
+        script = """
+typeset -ga EDITION_URS=("${(@f)${EDITION_RAW%$'\\n'}}")
+EDITION_UR=${EDITION_URS[1]}
+typeset -ga SSKR_URS=("${EDITION_URS[@]:1}")
+for ur in "${EDITION_URS[@]}"; do print -r -- "$ur"; envelope format "$ur"; echo ""; done
+"""
+        run_step(shell, "Capturing edition artifacts", script)
+
+
+
+        script = """
+RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
+  edition verify \\
+  --edition "$EDITION_UR" \\
+  --publisher "$PUBLISHER_XID"
+"""
+        run_step(shell, "Verifying composed edition", script)
+
+        script = """
+typeset -ga PERMIT_URS=("${(@f)$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
+  edition permits \\
+  --edition "$EDITION_UR")%$'\\n'}}")
+print -r -l -- "${PERMIT_URS[@]}"
+"""
+        run_step(shell, "Extracting permit URs", script)
+
 
         script = """
 typeset -g PERMIT_CONTENT_UR=""
 for permit in "${PERMIT_URS[@]}"; do
-  if PERMIT_OUTPUT=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
+  PERMIT_OUTPUT=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
     content decrypt \\
     --edition "$EDITION_UR" \\
     --publisher "$PUBLISHER_XID" \\
     --permit "$permit" \\
     --identity "$ALICE_PRVKEYS" \\
-    --emit-ur); then
+    --emit-ur 2>/dev/null)
+  if [[ -n "$PERMIT_OUTPUT" ]]; then
     PERMIT_CONTENT_UR=${PERMIT_OUTPUT%%$'\\n'*}
     echo "$PERMIT_CONTENT_UR"
     envelope format "$PERMIT_CONTENT_UR"
@@ -562,7 +542,7 @@ SSKR_CONTENT_UR=$(RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -
   --sskr "${SSKR_URS[2]}" \\
   --emit-ur)
 SSKR_CONTENT_UR=${SSKR_CONTENT_UR%%$'\\n'*}
-echo "$SSKR_CONTENT_UR"
+print -r -- "$SSKR_CONTENT_UR"
 envelope format "$SSKR_CONTENT_UR"
 """
         run_step(
