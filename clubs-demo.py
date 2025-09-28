@@ -451,6 +451,12 @@ envelope format "$CONTENT_WRAPPED"
         run_step(shell, "Assembling edition content envelope", script)
 
         script = """
+CONTENT_DIGEST=$(envelope digest "$CONTENT_WRAPPED")
+echo "$CONTENT_DIGEST"
+"""
+        run_step(shell, "Capturing content digest", script)
+
+        script = """
 PROVENANCE_SEED=$(seedtool --deterministic=PROVENANCE-DEMO --count 32 --out seed)
 echo $PROVENANCE_SEED
 """
@@ -461,7 +467,7 @@ echo $PROVENANCE_SEED
         register_path(PROV_DIR / "marks/mark-0.json")
 
         script = f"""
-GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur --quiet)
+GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur --quiet --info-ur "$CONTENT_DIGEST")
 echo "$GENESIS_MARK"
 provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown
 """
