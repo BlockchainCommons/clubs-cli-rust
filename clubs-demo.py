@@ -387,6 +387,32 @@ def sanitize_command(command: str) -> str:
     return display
 
 
+def build_content_script(prefix: str, subject_text: str, title: str) -> str:
+    subject = shlex.quote(subject_text)
+    edition_title = shlex.quote(title)
+    return f"""
+{prefix}_SUBJECT=$(envelope subject type string {subject})
+echo "${{{prefix}_SUBJECT}}"
+envelope format "${{{prefix}_SUBJECT}}"
+echo ""
+{prefix}_CLEAR=$(echo "${{{prefix}_SUBJECT}}" | envelope assertion add pred-obj string "title" string {edition_title})
+echo "${{{prefix}_CLEAR}}"
+envelope format "${{{prefix}_CLEAR}}"
+echo ""
+{prefix}_WRAPPED=$(envelope subject type wrapped "${{{prefix}_CLEAR}}")
+echo "${{{prefix}_WRAPPED}}"
+envelope format "${{{prefix}_WRAPPED}}"
+"""
+
+
+def build_digest_script(prefix: str, digest_var: str | None = None) -> str:
+    digest = digest_var or f"{prefix}_DIGEST"
+    return f"""
+{digest}=$(envelope digest "${{{prefix}_WRAPPED}}")
+echo "${{{digest}}}"
+"""
+
+
 def main() -> None:
     # Create persistent shell instance for efficient execution
     with PersistentShell(cwd=str(SCRIPT_DIR), env=ENV, debug=False) as shell:
@@ -435,25 +461,12 @@ envelope format "${upper}_XID"
 """
             run_step(shell, f"Creating XID document for {upper}", script)
 
-        script = """
-CONTENT_SUBJECT=$(envelope subject type string "Welcome to the Gordian Club!")
-echo "$CONTENT_SUBJECT"
-envelope format "$CONTENT_SUBJECT"
-echo ""
-CONTENT_CLEAR=$(echo "$CONTENT_SUBJECT" | envelope assertion add pred-obj string "title" string "Genesis Edition")
-echo "$CONTENT_CLEAR"
-envelope format "$CONTENT_CLEAR"
-echo ""
-CONTENT_WRAPPED=$(envelope subject type wrapped "$CONTENT_CLEAR")
-echo "$CONTENT_WRAPPED"
-envelope format "$CONTENT_WRAPPED"
-"""
+        script = build_content_script(
+            "CONTENT", "Welcome to the Gordian Club!", "Genesis Edition"
+        )
         run_step(shell, "Assembling edition content envelope", script)
 
-        script = """
-CONTENT_DIGEST=$(envelope digest "$CONTENT_WRAPPED")
-echo "$CONTENT_DIGEST"
-"""
+        script = build_digest_script("CONTENT")
         run_step(shell, "Capturing content digest", script)
 
         script = """
@@ -465,6 +478,7 @@ echo $PROVENANCE_SEED
         register_path(PROV_DIR / "generator.json")
         register_path(PROV_DIR / "marks")
         register_path(PROV_DIR / "marks/mark-0.json")
+        register_path(PROV_DIR / "marks/mark-1.json")
 
         script = f"""
 GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur --quiet --info-ur "$CONTENT_DIGEST")
@@ -556,6 +570,52 @@ envelope format "$SSKR_CONTENT_UR"
             "Decrypting content via SSKR shares",
             script
         )
+
+        script = build_content_script(
+            "UPDATE",
+            "Club update: upcoming workshops and Q&A sessions",
+            "Second Edition"
+        )
+        run_step(shell, "Authoring follow-up content envelope", script)
+
+        script = build_digest_script("UPDATE")
+        run_step(shell, "Capturing follow-up content digest", script)
+
+        script = f"""
+provenance next --comment "Second edition" --info-ur "$UPDATE_DIGEST" {rel(PROV_DIR)}
+SECOND_MARK=$(provenance print {rel(PROV_DIR)} --start 1 --end 1 --format ur)
+print -r -- "$SECOND_MARK"
+provenance print {rel(PROV_DIR)} --start 1 --end 1 --format markdown
+"""
+        run_step(shell, "Advancing provenance mark chain", script)
+
+        script = """
+SECOND_EDITION_RAW=$(RUSTFLAGS='-C debug-assertions=no' cargo run -p clubs-cli -- edition compose \\
+  --publisher "$PUBLISHER_XID" \\
+  --content "$UPDATE_WRAPPED" \\
+  --provenance "$SECOND_MARK" \\
+  --permit "$ALICE_XID" \\
+  --permit "$BOB_PUBKEYS" \\
+  --sskr 2of3)
+print -r -- "$SECOND_EDITION_RAW"
+"""
+        run_step(shell, "Composing second edition", script)
+
+        script = """
+typeset -ga EDITION2_URS=("${(@f)${SECOND_EDITION_RAW%$'\\n'}}")
+EDITION2_UR=${EDITION2_URS[1]}
+typeset -ga SSKR2_URS=("${EDITION2_URS[@]:1}")
+for ur in "${EDITION2_URS[@]}"; do print -r -- "$ur"; envelope format "$ur"; echo ""; done
+"""
+        run_step(shell, "Capturing second edition artifacts", script)
+
+        script = """
+RUSTFLAGS='-C debug-assertions=no' cargo run -q -p clubs-cli -- \\
+  edition verify \\
+  --edition "$EDITION2_UR" \\
+  --publisher "$PUBLISHER_XID"
+"""
+        run_step(shell, "Verifying second edition", script)
 
 
 
