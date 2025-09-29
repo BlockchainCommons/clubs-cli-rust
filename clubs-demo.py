@@ -419,25 +419,44 @@ def main() -> None:
         script = """
 setopt nobanghist
 """
-        run_step(shell, "Set zsh options", script)
+        run_step(
+            shell,
+            "Set zsh options",
+            script,
+            "zsh is the default shell on macOS and many Linux systems. This ensures consistent behavior across shells."
+        )
 
         script = """
-for cmd in seedtool envelope provenance cargo clubs; do
+for cmd in cargo seedtool envelope provenance clubs; do
   $cmd --version
 done
 """
-        run_step(shell, "Checking prerequisites", script)
+        run_step(
+            shell,
+            "Checking prerequisites",
+            script,
+            "Verify that all required commands are available, and that their version numbers are compatible."
+        )
 
         script = f"""
 rm -rf {qp(DEMO_DIR)} && mkdir -p {qp(DEMO_DIR)}
 """
-        run_step(shell, "Preparing demo workspace", script)
+        run_step(
+            shell,
+            "Preparing demo workspace",
+            script,
+            "Set up a clean directory for the demo artifacts. All we currently store here is the directory used to track the publisher's provenance mark generator."
+        )
 
         script = """
 PUBLISHER_SEED=$(seedtool --deterministic=CLUBS-DEMO --out seed)
 echo $PUBLISHER_SEED
 """
-        run_step(shell, "Generating deterministic publisher seed", script)
+        run_step(
+            shell,
+            "Generating deterministic publisher seed",
+            script
+        )
 
         script = """
 PUBLISHER_PRVKEYS=$(envelope generate prvkeys --seed "$PUBLISHER_SEED")
@@ -515,7 +534,7 @@ clubs edition verify \\
   --edition "$EDITION_UR" \\
   --publisher "$PUBLISHER_XID"
 """
-        run_step(shell, "Verifying composed edition", script)
+        run_step(shell, "Verifying composed edition", script, "No output indicates success.")
 
         script = """
 typeset -ga PERMIT_URS=("${(@f)$(clubs edition permits \\
@@ -545,7 +564,8 @@ done
         run_step(
             shell,
             "Decrypting content with Alice's permit",
-            script
+            script,
+            "Try each permit against Alice's private keys until one works.",
         )
 
         script = """
@@ -608,7 +628,7 @@ clubs edition verify \\
   --edition "$EDITION2_UR" \\
   --publisher "$PUBLISHER_XID"
 """
-        run_step(shell, "Verifying second edition", script)
+        run_step(shell, "Verifying second edition", script, "No output indicates success.")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
