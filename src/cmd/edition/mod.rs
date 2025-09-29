@@ -1,5 +1,6 @@
 pub mod compose;
 pub mod permits;
+pub mod sequence;
 pub mod verify;
 
 use anyhow::Result;
@@ -19,6 +20,8 @@ pub enum Commands {
     Verify(verify::CommandArgs),
     /// Extract sealed permits from an edition.
     Permits(permits::CommandArgs),
+    /// Validate a sequence of editions for provenance continuity.
+    Sequence(sequence::CommandArgs),
 }
 
 pub fn exec(args: CommandArgs) -> Result<()> {
@@ -26,5 +29,6 @@ pub fn exec(args: CommandArgs) -> Result<()> {
         Commands::Compose(args) => compose::exec(args),
         Commands::Verify(args) => verify::exec(args),
         Commands::Permits(args) => permits::exec(args),
+        Commands::Sequence(args) => sequence::exec(args),
     }
 }

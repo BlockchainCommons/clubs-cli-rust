@@ -427,7 +427,7 @@ setopt nobanghist
         )
 
         script = """
-for cmd in envelope provenance clubs; do
+for cmd in seedtool envelope provenance cargo clubs; do
   $cmd --version
 done
 """
@@ -678,6 +678,18 @@ clubs edition verify \\
   --publisher "$PUBLISHER_XID"
 """
         run_step(shell, "Verifying second edition", script, "No output indicates success.")
+
+        script = """
+clubs edition sequence \\
+  --edition "$EDITION2_UR" \\
+  --edition "$EDITION_UR"
+"""
+        run_step(
+            shell,
+            "Validating edition sequence",
+            script,
+            commentary="Confirm both editions belong to the same club and form a continuous chain. Editions may be provided in any order. No output indicates success."
+        )
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
