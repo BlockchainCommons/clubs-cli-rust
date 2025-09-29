@@ -455,7 +455,13 @@ PUBLISHER_XID=$(envelope xid new "$PUBLISHER_PRVKEYS")
 echo $PUBLISHER_XID
 envelope format "$PUBLISHER_XID"
 """
-        run_step(shell, "Deriving publisher signing material", script)
+        run_step(
+            shell,
+            "Deriving publisher cryptographic material",
+            script,
+            commentary=
+                "Create the publisher's keypairs and XID document."
+        )
 
         for name in PARTICIPANTS:
             upper = name.upper()
@@ -468,15 +474,30 @@ echo "{upper}_PUBKEYS=${upper}_PUBKEYS"
 echo "{upper}_XID=${upper}_XID"
 envelope format "${upper}_XID"
 """
-            run_step(shell, f"Creating XID document for {upper}", script)
+            run_step(
+                shell,
+                f"Creating XID document for {upper}",
+                script,
+                commentary=f"Provision {upper.title()} with keys so we can address permits to real members."
+            )
 
         script = build_content_script(
             "CONTENT", "Welcome to the Gordian Club!", "Genesis Edition"
         )
-        run_step(shell, "Assembling edition content envelope", script)
+        run_step(
+            shell,
+            "Assembling edition content envelope",
+            script,
+            commentary="Wrap the plaintext so its digest remains stable once we start sealing."
+        )
 
         script = build_digest_script("CONTENT")
-        run_step(shell, "Capturing content digest", script)
+        run_step(
+            shell,
+            "Capturing content digest",
+            script,
+            commentary="Store the content digest that must match the one stored in the Edition's provenance mark's info field."
+        )
 
         register_path(PROV_DIR / "generator.json")
         register_path(PROV_DIR / "marks")
@@ -488,7 +509,12 @@ GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --comment "Genesis edition" --form
 echo "$GENESIS_MARK"
 provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown
 """
-        run_step(shell, "Starting provenance mark chain", script)
+        run_step(
+            shell,
+            "Starting provenance mark chain",
+            script,
+            commentary="Initialize the publisher's mark generator and bind the genesis mark to the content digest using the info field."
+        )
 
         script = """
 EDITION_RAW=$(clubs init \\
@@ -501,7 +527,12 @@ EDITION_RAW=$(clubs init \\
 print -r -- "$EDITION_RAW"
 """
 
-        run_step(shell, "Composing genesis edition", script)
+        run_step(
+            shell,
+            "Composing genesis edition",
+            script,
+            commentary="Seal the content, attach permits, and sign the first edition with the club keys."
+        )
 
         script = """
 typeset -ga EDITION_URS=("${(@f)${EDITION_RAW%$'\\n'}}")
@@ -509,7 +540,12 @@ EDITION_UR=${EDITION_URS[1]}
 typeset -ga SSKR_URS=("${EDITION_URS[@]:1}")
 for ur in "${EDITION_URS[@]}"; do print -r -- "$ur"; envelope format "$ur"; echo ""; done
 """
-        run_step(shell, "Capturing edition artifacts", script)
+        run_step(
+            shell,
+            "Capturing edition artifacts",
+            script,
+            commentary="Inspect the resulting edition and enumerate the emitted SSKR shares."
+        )
 
         script = """
 clubs edition verify \\
@@ -523,7 +559,12 @@ typeset -ga PERMIT_URS=("${(@f)$(clubs edition permits \\
   --edition "$EDITION_UR")%$'\\n'}}")
 print -r -l -- "${PERMIT_URS[@]}"
 """
-        run_step(shell, "Extracting permit URs", script)
+        run_step(
+            shell,
+            "Extracting permit URs",
+            script,
+            commentary="List the sealed recipient messages to confirm the intended audience."
+        )
 
         script = """
 typeset -g PERMIT_CONTENT_UR=""
@@ -564,7 +605,8 @@ envelope format "$SSKR_CONTENT_UR"
         run_step(
             shell,
             "Decrypting content via SSKR shares",
-            script
+            script,
+            commentary="Show that a quorum of shares can recover the same plaintext without any permit."
         )
 
         script = build_content_script(
@@ -572,10 +614,20 @@ envelope format "$SSKR_CONTENT_UR"
             "Club update: upcoming workshops and Q&A sessions",
             "Second Edition"
         )
-        run_step(shell, "Authoring follow-up content envelope", script)
+        run_step(
+            shell,
+            "Authoring follow-up content envelope",
+            script,
+            commentary="Prepare the content for the club's second edition."
+        )
 
         script = build_digest_script("UPDATE")
-        run_step(shell, "Capturing follow-up content digest", script)
+        run_step(
+            shell,
+            "Capturing follow-up content digest",
+            script,
+            commentary="Record the new digest so the next provenance mark can attest to the update."
+        )
 
         script = f"""
 provenance next --comment "Second edition" --info "$UPDATE_DIGEST" {rel(PROV_DIR)}
@@ -583,7 +635,12 @@ SECOND_MARK=$(provenance print {rel(PROV_DIR)} --start 1 --end 1 --format ur)
 print -r -- "$SECOND_MARK"
 provenance print {rel(PROV_DIR)} --start 1 --end 1 --format markdown
 """
-        run_step(shell, "Advancing provenance mark chain", script)
+        run_step(
+            shell,
+            "Advancing provenance mark chain",
+            script,
+            commentary="Issue the second mark (#1) and confirm its info digest matches the updated content."
+        )
 
         script = """
 SECOND_EDITION_RAW=$(clubs edition compose \\
@@ -595,7 +652,12 @@ SECOND_EDITION_RAW=$(clubs edition compose \\
   --sskr 2of3)
 print -r -- "$SECOND_EDITION_RAW"
 """
-        run_step(shell, "Composing second edition", script)
+        run_step(
+            shell,
+            "Composing second edition",
+            script,
+            commentary="Seal the follow-up content with the new mark and regenerate member permits."
+        )
 
         script = """
 typeset -ga EDITION2_URS=("${(@f)${SECOND_EDITION_RAW%$'\\n'}}")
@@ -603,7 +665,12 @@ EDITION2_UR=${EDITION2_URS[1]}
 typeset -ga SSKR2_URS=("${EDITION2_URS[@]:1}")
 for ur in "${EDITION2_URS[@]}"; do print -r -- "$ur"; envelope format "$ur"; echo ""; done
 """
-        run_step(shell, "Capturing second edition artifacts", script)
+        run_step(
+            shell,
+            "Capturing second edition artifacts",
+            script,
+            commentary="Review the second-edition envelope and its fresh shard set before verification."
+        )
 
         script = """
 clubs edition verify \\
