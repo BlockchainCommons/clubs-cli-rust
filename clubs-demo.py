@@ -481,7 +481,7 @@ echo $PROVENANCE_SEED
         register_path(PROV_DIR / "marks/mark-1.json")
 
         script = f"""
-GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur --quiet --info-ur "$CONTENT_DIGEST")
+GENESIS_MARK=$(provenance new {rel(PROV_DIR)} --seed "$PROVENANCE_SEED" --comment "Genesis edition" --format ur --quiet --info "$CONTENT_DIGEST")
 echo "$GENESIS_MARK"
 provenance print {rel(PROV_DIR)} --start 0 --end 0 --format markdown
 """
@@ -582,7 +582,7 @@ envelope format "$SSKR_CONTENT_UR"
         run_step(shell, "Capturing follow-up content digest", script)
 
         script = f"""
-provenance next --comment "Second edition" --info-ur "$UPDATE_DIGEST" {rel(PROV_DIR)}
+provenance next --comment "Second edition" --info "$UPDATE_DIGEST" {rel(PROV_DIR)}
 SECOND_MARK=$(provenance print {rel(PROV_DIR)} --start 1 --end 1 --format ur)
 print -r -- "$SECOND_MARK"
 provenance print {rel(PROV_DIR)} --start 1 --end 1 --format markdown
