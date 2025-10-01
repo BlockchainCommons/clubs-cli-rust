@@ -1,5 +1,7 @@
 # `clubs-cli` (`clubs`)
 
+`clubs-cli` is a command-line interface for working with Blockchain Commons' Gordian Clubs. It orchestrates the underlying [`clubs`](https://crates.io/crates/clubs) crate to compose editions, attach permits, verify signatures, check provenance continuity, and demonstrate decryption paths.ubs-cli` (`clubs`)
+
 `clubs-cli` is a command-line interface for working with Blockchain Commons’ Gordian Clubs. It orchestrates the underlying [`clubs`](../clubs) crate to compose editions, attach permits, verify signatures, check provenance continuity, and demonstrate decryption paths.
 
 > **Status:** the tool is not published on crates.io. Build it from the git workspace. The crate expects the `clubs` library source to be available via a sibling path because Cargo manifests currently reference `../clubs` directly.
@@ -17,9 +19,19 @@ The CLI currently focuses on single-publisher workflows and provides the followi
 
 Run `clubs --help` or `clubs <command> --help` for full flag listings.
 
+## Installation
+
+Install via cargo:
+
+```bash
+cargo install clubs-cli
+```
+
+The installed binary is named `clubs`.
+
 ## Getting started
 
-Start by examining the `demo-log.md` file produced by the demo script. It illustrates a complete end-to-end scenario using the CLI.
+Run `clubs --help` to see available commands. Start by examining the `demo-log.md` file in the [source repository](https://github.com/BlockchainCommons/bc-rust/tree/master/clubs-cli), which is produced by the demo script and illustrates a complete end-to-end scenario.
 
 ## Demonstration script
 
@@ -36,3 +48,7 @@ Running the script requires the `provenance` and `envelope` tools to be on `PATH
 cd clubs-cli
 ./clubs-demo.py > demo-log.md
 ```
+
+## Version history
+
+- **0.1.0** (October 1, 2025) – Initial release with subcommands for edition composition, verification, provenance sequencing, permit extraction, and content decryption.

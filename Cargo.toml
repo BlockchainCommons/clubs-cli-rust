@@ -18,7 +18,7 @@ path = "src/main.rs"
 anyhow = "^1.0"
 clap = { version = "^4.5", features = ["derive", "unstable-styles"] }
 
-clubs = { path = "../clubs" }
+clubs = "^0.1.0"
 bc-components = "^0.25.0"
 bc-envelope = "^0.34.0"
 bc-ur = "^0.13.0"

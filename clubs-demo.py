@@ -427,7 +427,7 @@ setopt nobanghist
         )
 
         script = """
-for cmd in seedtool envelope provenance cargo clubs; do
+for cmd in cargo envelope provenance clubs; do
   $cmd --version
 done
 """
@@ -555,8 +555,7 @@ clubs edition verify \\
         run_step(shell, "Verifying composed edition", script, "No output indicates success.")
 
         script = """
-typeset -ga PERMIT_URS=("${(@f)$(clubs edition permits \\
-  --edition "$EDITION_UR")%$'\\n'}}")
+typeset -ga PERMIT_URS=("${(@f)$(clubs edition permits --edition "$EDITION_UR")%$'\\n'}")
 print -r -l -- "${PERMIT_URS[@]}"
 """
         run_step(
@@ -630,9 +629,8 @@ envelope format "$SSKR_CONTENT_UR"
         )
 
         script = f"""
-provenance next --comment "Second edition" --info "$UPDATE_DIGEST" {rel(PROV_DIR)}
-SECOND_MARK=$(provenance print {rel(PROV_DIR)} --start 1 --end 1 --format ur)
-print -r -- "$SECOND_MARK"
+SECOND_MARK=$(provenance next --comment "Second edition" --format ur --quiet --info "$UPDATE_DIGEST" {rel(PROV_DIR)})
+echo "$SECOND_MARK"
 provenance print {rel(PROV_DIR)} --start 1 --end 1 --format markdown
 """
         run_step(
