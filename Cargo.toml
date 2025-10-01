@@ -2,13 +2,20 @@
 name = "clubs-cli"
 version = "0.1.0"
 edition = "2024"
-publish = false
-
 description = "Command-line interface for composing and inspecting Gordian Club editions."
-license = "BSD-2-Clause-Patent"
 authors = ["Blockchain Commons"]
-repository = "https://github.com/BlockchainCommons/bc-rust"
+repository = "https://github.com/BlockchainCommons/clubs-cli-rust"
 readme = "README.md"
+license = "BSD-2-Clause-Patent"
+documentation = "https://docs.rs/clubs-cli"
+keywords = [
+    "encoding",
+    "cbor",
+    "binary",
+    "format",
+    "publishing",
+] # Up to five
+categories = ["data-structures", "encoding"] # https://crates.io/category_slugs
 
 [[bin]]
 name = "clubs"
