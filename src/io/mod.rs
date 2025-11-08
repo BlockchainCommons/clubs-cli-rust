@@ -11,7 +11,6 @@ use bc_components::{
     SealedMessage, SymmetricKey, XID, XIDProvider,
 };
 use bc_envelope::prelude::*;
-use bc_ur::UR;
 use bc_xid::{HasPermissions, Privilege, XIDDocument};
 use known_values::HOLDER;
 use provenance_mark::ProvenanceMark;
@@ -25,7 +24,9 @@ pub struct RecipientDescriptor {
 
 impl RecipientDescriptor {
     /// Returns the public keys associated with the descriptor.
-    pub fn public_keys(&self) -> &PublicKeys { &self.pub_keys }
+    pub fn public_keys(&self) -> &PublicKeys {
+        &self.pub_keys
+    }
 
     /// Returns the optional XID document if one was provided.
     #[allow(dead_code)]
@@ -83,7 +84,9 @@ fn read_stdin() -> Result<String> {
     Ok(trimmed.to_owned())
 }
 
-fn tighten_ur(input: &str) -> String { input.split_whitespace().collect() }
+fn tighten_ur(input: &str) -> String {
+    input.split_whitespace().collect()
+}
 
 /// Load an Envelope, expecting a UR encoding.
 pub fn parse_envelope(spec: &str) -> Result<Envelope> {
