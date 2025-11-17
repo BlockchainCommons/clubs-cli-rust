@@ -85,13 +85,13 @@ pub fn exec(args: CommandArgs) -> Result<()> {
         );
     }
 
-    if let Some(first_sorted) = sorted.first() {
-        if !first_sorted.provenance.is_genesis() {
-            eprintln!(
-                "warning: sequence starts at seq {}",
-                first_sorted.provenance.seq()
-            );
-        }
+    if let Some(first_sorted) = sorted.first()
+        && !first_sorted.provenance.is_genesis()
+    {
+        eprintln!(
+            "warning: sequence starts at seq {}",
+            first_sorted.provenance.seq()
+        );
     }
 
     Ok(())

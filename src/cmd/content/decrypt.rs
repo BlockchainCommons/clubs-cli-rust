@@ -61,16 +61,15 @@ pub fn exec(args: CommandArgs) -> Result<()> {
     let edition = Edition::try_from(inner_envelope.clone())
         .context("edition payload is not a valid club edition")?;
 
-    if let Some(descriptor) = verifier_descriptor.as_ref() {
-        if let Some(expected_xid) = descriptor.member_xid() {
-            if edition.club_xid != expected_xid {
-                bail!(
-                    "edition references club XID {} but verifier is {}",
-                    edition.club_xid,
-                    expected_xid
-                );
-            }
-        }
+    if let Some(descriptor) = verifier_descriptor.as_ref()
+        && let Some(expected_xid) = descriptor.member_xid()
+        && edition.club_xid != expected_xid
+    {
+        bail!(
+            "edition references club XID {} but verifier is {}",
+            edition.club_xid,
+            expected_xid
+        );
     }
 
     let sealed_permits = parse_permits(&args.permits)?;

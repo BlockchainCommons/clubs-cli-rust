@@ -24,9 +24,7 @@ pub struct RecipientDescriptor {
 
 impl RecipientDescriptor {
     /// Returns the public keys associated with the descriptor.
-    pub fn public_keys(&self) -> &PublicKeys {
-        &self.pub_keys
-    }
+    pub fn public_keys(&self) -> &PublicKeys { &self.pub_keys }
 
     /// Returns the optional XID document if one was provided.
     #[allow(dead_code)]
@@ -84,9 +82,7 @@ fn read_stdin() -> Result<String> {
     Ok(trimmed.to_owned())
 }
 
-fn tighten_ur(input: &str) -> String {
-    input.split_whitespace().collect()
-}
+fn tighten_ur(input: &str) -> String { input.split_whitespace().collect() }
 
 /// Load an Envelope, expecting a UR encoding.
 pub fn parse_envelope(spec: &str) -> Result<Envelope> {
@@ -105,10 +101,10 @@ fn decode_envelope(raw: &str) -> Result<Envelope> {
     }
 
     let compact = tighten_ur(primary);
-    if compact != primary {
-        if let Ok(env) = Envelope::from_ur_string(&compact) {
-            return Ok(env);
-        }
+    if compact != primary
+        && let Ok(env) = Envelope::from_ur_string(&compact)
+    {
+        return Ok(env);
     }
 
     let ur = UR::from_ur_string(compact)
@@ -155,10 +151,10 @@ fn decode_xid_document(raw: &str) -> Result<XIDDocument> {
     }
 
     let compact = tighten_ur(trimmed);
-    if compact != trimmed {
-        if let Ok(doc) = XIDDocument::from_ur_string(&compact) {
-            return Ok(doc);
-        }
+    if compact != trimmed
+        && let Ok(doc) = XIDDocument::from_ur_string(&compact)
+    {
+        return Ok(doc);
     }
 
     let ur = UR::from_ur_string(compact)
@@ -188,10 +184,10 @@ fn decode_public_keys(raw: &str) -> Result<PublicKeys> {
     }
 
     let compact = tighten_ur(trimmed);
-    if compact != trimmed {
-        if let Ok(keys) = PublicKeys::from_ur_string(&compact) {
-            return Ok(keys);
-        }
+    if compact != trimmed
+        && let Ok(keys) = PublicKeys::from_ur_string(&compact)
+    {
+        return Ok(keys);
     }
 
     let ur = UR::from_ur_string(compact)
@@ -322,10 +318,10 @@ fn decode_private_keys(raw: &str) -> Result<PrivateKeys> {
     }
 
     let compact = tighten_ur(trimmed);
-    if compact != trimmed {
-        if let Ok(keys) = PrivateKeys::from_ur_string(&compact) {
-            return Ok(keys);
-        }
+    if compact != trimmed
+        && let Ok(keys) = PrivateKeys::from_ur_string(&compact)
+    {
+        return Ok(keys);
     }
 
     let ur = UR::from_ur_string(compact)
@@ -348,10 +344,10 @@ fn decode_private_key_base(raw: &str) -> Result<PrivateKeyBase> {
     }
 
     let compact = tighten_ur(trimmed);
-    if compact != trimmed {
-        if let Ok(base) = PrivateKeyBase::from_ur_string(&compact) {
-            return Ok(base);
-        }
+    if compact != trimmed
+        && let Ok(base) = PrivateKeyBase::from_ur_string(&compact)
+    {
+        return Ok(base);
     }
 
     let ur = UR::from_ur_string(compact)
@@ -415,10 +411,10 @@ pub fn parse_sealed_message(spec: &str) -> Result<SealedMessage> {
     }
 
     let compact = tighten_ur(trimmed);
-    if compact != trimmed {
-        if let Ok(sealed) = SealedMessage::from_ur_string(&compact) {
-            return Ok(sealed);
-        }
+    if compact != trimmed
+        && let Ok(sealed) = SealedMessage::from_ur_string(&compact)
+    {
+        return Ok(sealed);
     }
 
     let ur = UR::from_ur_string(compact)
@@ -444,10 +440,10 @@ pub fn parse_sskr_share(spec: &str) -> Result<SSKRShare> {
     }
 
     let compact = tighten_ur(trimmed);
-    if compact != trimmed {
-        if let Ok(share) = SSKRShare::from_ur_string(&compact) {
-            return Ok(share);
-        }
+    if compact != trimmed
+        && let Ok(share) = SSKRShare::from_ur_string(&compact)
+    {
+        return Ok(share);
     }
 
     let ur = UR::from_ur_string(compact)
@@ -472,10 +468,10 @@ pub fn parse_symmetric_key(spec: &str) -> Result<SymmetricKey> {
     }
 
     let compact = tighten_ur(trimmed);
-    if compact != trimmed {
-        if let Ok(key) = SymmetricKey::from_ur_string(&compact) {
-            return Ok(key);
-        }
+    if compact != trimmed
+        && let Ok(key) = SymmetricKey::from_ur_string(&compact)
+    {
+        return Ok(key);
     }
 
     let ur = UR::from_ur_string(compact)

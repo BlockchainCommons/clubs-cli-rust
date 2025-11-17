@@ -34,14 +34,14 @@ pub fn exec(args: CommandArgs) -> Result<()> {
     let edition = Edition::try_from(inner_envelope.clone())
         .context("edition payload is not a valid club edition")?;
 
-    if let Some(expected_xid) = publisher_descriptor.member_xid() {
-        if edition.club_xid != expected_xid {
-            bail!(
-                "edition references club XID {} but publisher descriptor is {}",
-                edition.club_xid,
-                expected_xid
-            );
-        }
+    if let Some(expected_xid) = publisher_descriptor.member_xid()
+        && edition.club_xid != expected_xid
+    {
+        bail!(
+            "edition references club XID {} but publisher descriptor is {}",
+            edition.club_xid,
+            expected_xid
+        );
     }
 
     if let Some(prev_spec) = args.previous.as_ref() {
