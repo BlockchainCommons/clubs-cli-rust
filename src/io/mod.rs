@@ -259,7 +259,7 @@ fn decode_public_key_permit(
         return Ok(None);
     };
 
-    if !envelope.has_type_envelope("PublicKeyPermit") {
+    if !envelope.has_type("PublicKeyPermit") {
         return Ok(None);
     }
 

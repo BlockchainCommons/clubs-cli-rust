@@ -36,7 +36,7 @@ pub fn exec(args: CommandArgs) -> Result<()> {
     let info_digest = Digest::try_from(info_cbor).map_err(|err| {
         anyhow!("provenance mark info is not a digest: {err}")
     })?;
-    let content_digest = content_env.digest().into_owned();
+    let content_digest = content_env.digest();
     if info_digest != content_digest {
         bail!(
             "provenance mark info digest {} does not match content digest {}",

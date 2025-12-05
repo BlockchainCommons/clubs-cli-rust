@@ -99,7 +99,7 @@ pub fn exec(args: CommandArgs) -> Result<()> {
 
 fn extract_summary(mut envelope: Envelope) -> Result<EditionSummary> {
     loop {
-        if envelope.check_type_envelope("Edition").is_ok() {
+        if envelope.check_type("Edition").is_ok() {
             break;
         }
 
